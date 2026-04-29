@@ -387,7 +387,7 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float) -> list[str]:
         if job.resolution_height is not None:
             filters.append(f"scale=w=-2:h={job.resolution_height}")
         filters += ["format=nv12", "hwupload"]
-        vf_args = ["-noautoscale", "-vf", ",".join(filters)]
+        vf_args = ["-vf", ",".join(filters)]
     else:
         # No scaling, no rotation, no fps filter → full HW-decode pipeline.
         hw_args = ["-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi"]
@@ -415,7 +415,7 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float) -> list[str]:
         for idx in (job.selected_subtitles or []):
             cmd += ["-map", f"0:s:{idx}"]
 
-    cmd += [*vf_args, "-c:v", "h264_vaapi", "-b:v", video_bitrate, *audio_args]
+    cmd += [*vf_args, "-noautoscale", "-c:v", "h264_vaapi", "-b:v", video_bitrate, *audio_args]
 
     if explicit_map and job.selected_subtitles:
         cmd += ["-c:s", "mov_text"]
