@@ -763,19 +763,23 @@ class MainWindow(Gtk.Window):
 
         # Re-populate the audio bitrate combo box
         abr_idx = self._combo_abr.get_active()
+        self._combo_abr.handler_block_by_func(self._save_settings)
         self._combo_abr.remove_all()
         abr_items = [i18n.t("audio_original")] + [lbl for lbl, _ in AUDIO_BITRATES[1:]]
         for lbl in abr_items:
             self._combo_abr.append_text(lbl)
         self._combo_abr.set_active(abr_idx if 0 <= abr_idx < len(abr_items) else DEFAULT_AUDIO_IDX)
+        self._combo_abr.handler_unblock_by_func(self._save_settings)
 
         # Re-populate the resolution combo box
         res_idx = self._combo_res.get_active()
+        self._combo_res.handler_block_by_func(self._save_settings)
         self._combo_res.remove_all()
         res_items = [i18n.t("res_original")] + [lbl for lbl, _ in RESOLUTIONS[1:]]
         for lbl in res_items:
             self._combo_res.append_text(lbl)
         self._combo_res.set_active(res_idx if 0 <= res_idx < len(res_items) else DEFAULT_RES_IDX)
+        self._combo_res.handler_unblock_by_func(self._save_settings)
 
         # The status column uses a cell_data_func that calls _status_str() on
         # every render, so a language switch is reflected automatically.  We
