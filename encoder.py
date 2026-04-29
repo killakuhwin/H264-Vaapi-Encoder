@@ -530,7 +530,7 @@ class Encoder:
                 if cancelled:
                     if os.path.exists(job.output_path):
                         os.remove(job.output_path)
-                    on_done(False, "Abgebrochen")
+                    on_done(False, "CANCELLED")
                     return
 
                 if hung:

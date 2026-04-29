@@ -7,6 +7,8 @@ import threading
 import gi
 from urllib.parse import unquote
 
+import i18n
+
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib, GObject, Pango
 from gi.repository import PangoCairo
@@ -111,11 +113,28 @@ def _fmt_duration(secs: float) -> str:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
 
-STATUS_PENDING  = "Ausstehend"
-STATUS_ENCODING = "Wird kodiert…"
-STATUS_DONE     = "Fertig"
-STATUS_ERROR    = "Fehler"
-STATUS_CANCELLED = "Abgebrochen"
+# Status values – these are language-neutral sentinel keys used internally.
+# The human-visible strings come from i18n.t(); see _status_str() helper.
+STATUS_PENDING   = "PENDING"
+STATUS_ENCODING  = "ENCODING"
+STATUS_DONE      = "DONE"
+STATUS_ERROR     = "ERROR"
+STATUS_CANCELLED = "CANCELLED"
+
+# Mapping from sentinel to i18n key for display strings
+_STATUS_KEY = {
+    STATUS_PENDING:   "status_pending",
+    STATUS_ENCODING:  "status_encoding",
+    STATUS_DONE:      "status_done",
+    STATUS_ERROR:     "status_error",
+    STATUS_CANCELLED: "status_cancelled",
+}
+
+
+def _status_str(sentinel: str) -> str:
+    """Return the translated display string for a status sentinel."""
+    key = _STATUS_KEY.get(sentinel)
+    return i18n.t(key) if key else sentinel
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -235,23 +254,23 @@ class MainWindow(Gtk.Window):
         toolbar.get_style_context().add_class(Gtk.STYLE_CLASS_PRIMARY_TOOLBAR)
         vbox.pack_start(toolbar, False, False, 0)
 
-        btn_add = Gtk.ToolButton()
-        btn_add.set_label("Dateien hinzufügen")
-        btn_add.set_icon_name("document-open")
-        btn_add.connect("clicked", self._on_add_files)
-        toolbar.insert(btn_add, -1)
+        self._btn_add = Gtk.ToolButton()
+        self._btn_add.set_label("Dateien hinzufügen")
+        self._btn_add.set_icon_name("document-open")
+        self._btn_add.connect("clicked", self._on_add_files)
+        toolbar.insert(self._btn_add, -1)
 
-        btn_scan = Gtk.ToolButton()
-        btn_scan.set_label("Ordner scannen")
-        btn_scan.set_icon_name("folder-saved-search")
-        btn_scan.connect("clicked", self._on_scan_folder)
-        toolbar.insert(btn_scan, -1)
+        self._btn_scan = Gtk.ToolButton()
+        self._btn_scan.set_label("Ordner scannen")
+        self._btn_scan.set_icon_name("folder-saved-search")
+        self._btn_scan.connect("clicked", self._on_scan_folder)
+        toolbar.insert(self._btn_scan, -1)
 
-        btn_remove = Gtk.ToolButton()
-        btn_remove.set_label("Entfernen")
-        btn_remove.set_icon_name("list-remove")
-        btn_remove.connect("clicked", self._on_remove_selected)
-        toolbar.insert(btn_remove, -1)
+        self._btn_remove = Gtk.ToolButton()
+        self._btn_remove.set_label("Entfernen")
+        self._btn_remove.set_icon_name("list-remove")
+        self._btn_remove.connect("clicked", self._on_remove_selected)
+        toolbar.insert(self._btn_remove, -1)
 
         sep = Gtk.SeparatorToolItem()
         sep.set_expand(True)
@@ -270,6 +289,9 @@ class MainWindow(Gtk.Window):
         self._btn_cancel.set_sensitive(False)
         self._btn_cancel.connect("clicked", self._on_cancel)
         toolbar.insert(self._btn_cancel, -1)
+
+        # _tr_widgets maps i18n keys → widgets so _apply_language() can patch them.
+        self._tr_widgets: dict[str, object] = {}
 
         # ---- Main area: paned (list | settings) ------------------------
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
@@ -303,8 +325,13 @@ class MainWindow(Gtk.Window):
         self._global_progress.set_size_request(200, -1)
         status_box.pack_end(self._global_progress, False, False, 0)
 
+        # Apply the default language (English) to all translatable widgets.
+        # _load_settings() may override this immediately after.
+        self._apply_language()
+
     def _build_file_list(self) -> Gtk.Widget:
-        frame = Gtk.Frame(label="Eingabedateien")
+        self._frame_input_files = Gtk.Frame(label="Eingabedateien")
+        frame = self._frame_input_files
         frame.set_shadow_type(Gtk.ShadowType.IN)
 
         # columns: filename, directory, status, progress, full-path,
@@ -341,6 +368,7 @@ class MainWindow(Gtk.Window):
             c.set_expand(True)
             c.set_resizable(True)
             tv.append_column(c)
+            return c
 
         # Stop-after marker column (very narrow, no header text)
         stop_cell = Gtk.CellRendererText()
@@ -350,16 +378,30 @@ class MainWindow(Gtk.Window):
         stop_col.set_resizable(False)
         tv.append_column(stop_col)
 
-        col("Dateiname",   COL_FILENAME)
-        col("Verzeichnis", COL_DIRECTORY)
-        col("Status",      COL_STATUS)
+        self._col_filename  = col("Dateiname",   COL_FILENAME)
+        self._col_directory = col("Verzeichnis", COL_DIRECTORY)
+
+        # Status column: store raw sentinel, translate on render so language
+        # switching always shows the correct string without re-patching the store.
+        _status_cell = Gtk.CellRendererText()
+        _status_cell.set_property("ellipsize", Pango.EllipsizeMode.MIDDLE)
+        self._col_status = Gtk.TreeViewColumn("Status", _status_cell)
+        self._col_status.set_expand(True)
+        self._col_status.set_resizable(True)
+        self._col_status.set_cell_data_func(
+            _status_cell,
+            lambda col, cell, model, it, _: cell.set_property(
+                "text", _status_str(model.get_value(it, COL_STATUS))
+            ),
+        )
+        tv.append_column(self._col_status)
 
         # Progress column
         prog_cell = ProgressCellRenderer()
-        prog_col = Gtk.TreeViewColumn("Fortschritt", prog_cell, value=COL_PROGRESS)
-        prog_col.set_expand(True)
-        prog_col.set_resizable(True)
-        tv.append_column(prog_col)
+        self._col_progress = Gtk.TreeViewColumn("Fortschritt", prog_cell, value=COL_PROGRESS)
+        self._col_progress.set_expand(True)
+        self._col_progress.set_resizable(True)
+        tv.append_column(self._col_progress)
 
         def _auto_col(title, col_idx):
             """Metadata column: auto-sized to content, no extra expand."""
@@ -369,12 +411,13 @@ class MainWindow(Gtk.Window):
             c.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
             c.set_resizable(True)
             tv.append_column(c)
+            return c
 
-        _auto_col("Auflösung",    COL_RESOLUTION)
-        _auto_col("Video-Bitrate", COL_VID_BITRATE)
-        _auto_col("Audio-Bitrate", COL_AUD_BITRATE)
-        _auto_col("FPS",           COL_FPS)
-        _auto_col("Länge",         COL_DURATION)
+        self._col_resolution  = _auto_col("Auflösung",    COL_RESOLUTION)
+        self._col_vid_bitrate = _auto_col("Video-Bitrate", COL_VID_BITRATE)
+        self._col_aud_bitrate = _auto_col("Audio-Bitrate", COL_AUD_BITRATE)
+        self._col_fps         = _auto_col("FPS",           COL_FPS)
+        self._col_duration    = _auto_col("Länge",         COL_DURATION)
 
         tv.connect("button-press-event", self._on_treeview_button_press)
         tv.connect("row-activated",      self._on_row_activated)
@@ -417,7 +460,25 @@ class MainWindow(Gtk.Window):
         tv.connect("drag-data-get",      self._on_drag_data_get)
         tv.connect("drag-data-received", self._on_drag_data)
 
-        frame.add(sw)
+        # ---- Language button header ----------------------------------------
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.set_border_width(4)
+        self._lang_btn = Gtk.MenuButton()
+        self._lang_btn.set_label("🇬🇧 English")
+        lang_menu = Gtk.Menu()
+        item_en = Gtk.MenuItem(label="🇬🇧 English")
+        item_de = Gtk.MenuItem(label="🇩🇪 Deutsch")
+        item_en.connect("activate", lambda _: self._set_language("en"))
+        item_de.connect("activate", lambda _: self._set_language("de"))
+        lang_menu.append(item_en)
+        lang_menu.append(item_de)
+        lang_menu.show_all()
+        self._lang_btn.set_popup(lang_menu)
+        header.pack_end(self._lang_btn, False, False, 0)
+        vbox.pack_start(header, False, False, 0)
+        vbox.pack_start(sw, True, True, 0)
+        frame.add(vbox)
         return frame
 
     def _build_settings(self) -> Gtk.Widget:
@@ -425,7 +486,8 @@ class MainWindow(Gtk.Window):
         outer.set_border_width(4)
 
         # ---- Output path -----------------------------------------------
-        out_frame = Gtk.Frame(label="Ausgabepfad")
+        self._frame_output_path = Gtk.Frame(label="Ausgabepfad")
+        out_frame = self._frame_output_path
         out_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         out_box.set_border_width(8)
         out_frame.add(out_box)
@@ -455,7 +517,8 @@ class MainWindow(Gtk.Window):
         Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
 
         # Output naming
-        naming_frame = Gtk.Frame(label="Ausgabename")
+        self._frame_output_name = Gtk.Frame(label="Ausgabename")
+        naming_frame = self._frame_output_name
         naming_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         naming_box.set_border_width(8)
         naming_frame.add(naming_box)
@@ -487,7 +550,8 @@ class MainWindow(Gtk.Window):
         naming_box.pack_start(self._radio_replace, False, False, 0)
 
         suffix_row = Gtk.Box(spacing=4)
-        suffix_row.pack_start(Gtk.Label(label="Suffix:"), False, False, 0)
+        self._lbl_suffix = Gtk.Label(label="Suffix:")
+        suffix_row.pack_start(self._lbl_suffix, False, False, 0)
         self._entry_suffix = Gtk.Entry()
         self._entry_suffix.set_text("_h264")
         self._entry_suffix.set_width_chars(10)
@@ -496,7 +560,8 @@ class MainWindow(Gtk.Window):
         self._suffix_row = suffix_row
 
         # ---- Bitrate settings ------------------------------------------
-        br_frame = Gtk.Frame(label="Bitrate-Einstellungen")
+        self._frame_bitrate = Gtk.Frame(label="Bitrate-Einstellungen")
+        br_frame = self._frame_bitrate
         br_grid = Gtk.Grid()
         br_grid.set_column_spacing(8)
         br_grid.set_row_spacing(8)
@@ -504,36 +569,38 @@ class MainWindow(Gtk.Window):
         br_frame.add(br_grid)
         outer.pack_start(br_frame, False, False, 0)
 
-        br_grid.attach(Gtk.Label(label="Video-Bitrate:"), 0, 0, 1, 1)
+        self._lbl_vid_bitrate = Gtk.Label(label="Video-Bitrate:")
+        br_grid.attach(self._lbl_vid_bitrate, 0, 0, 1, 1)
         self._combo_vbr = Gtk.ComboBoxText()
         for label, _ in VIDEO_BITRATES:
             self._combo_vbr.append_text(label)
         self._combo_vbr.set_active(DEFAULT_VIDEO_IDX)
         br_grid.attach(self._combo_vbr, 1, 0, 1, 1)
 
-        br_grid.attach(Gtk.Label(label="Audio-Bitrate:"), 0, 1, 1, 1)
+        self._lbl_aud_bitrate = Gtk.Label(label="Audio-Bitrate:")
+        br_grid.attach(self._lbl_aud_bitrate, 0, 1, 1, 1)
         self._combo_abr = Gtk.ComboBoxText()
         for label, _ in AUDIO_BITRATES:
             self._combo_abr.append_text(label)
         self._combo_abr.set_active(DEFAULT_AUDIO_IDX)
         br_grid.attach(self._combo_abr, 1, 1, 1, 1)
 
-        lbl_res = Gtk.Label(label="Auflösung:")
-        lbl_res.set_halign(Gtk.Align.START)
-        br_grid.attach(lbl_res, 0, 2, 1, 1)
+        self._lbl_resolution = Gtk.Label(label="Auflösung:")
+        self._lbl_resolution.set_halign(Gtk.Align.START)
+        br_grid.attach(self._lbl_resolution, 0, 2, 1, 1)
         self._combo_res = Gtk.ComboBoxText()
         for label, _ in RESOLUTIONS:
             self._combo_res.append_text(label)
         self._combo_res.set_active(DEFAULT_RES_IDX)
         br_grid.attach(self._combo_res, 1, 2, 1, 1)
 
-        res_note = Gtk.Label()
-        res_note.set_markup(
+        self._lbl_res_note = Gtk.Label()
+        self._lbl_res_note.set_markup(
             '<small><i>Nicht-16:9-Quellen werden automatisch\n'
             'im Originalseitenverhältnis skaliert.</i></small>'
         )
-        res_note.set_halign(Gtk.Align.START)
-        br_grid.attach(res_note, 0, 3, 2, 1)
+        self._lbl_res_note.set_halign(Gtk.Align.START)
+        br_grid.attach(self._lbl_res_note, 0, 3, 2, 1)
 
         # FPS option
         self._chk_fps_limit = Gtk.CheckButton(
@@ -541,16 +608,17 @@ class MainWindow(Gtk.Window):
         br_grid.attach(self._chk_fps_limit, 0, 4, 2, 1)
 
         # High-FPS note
-        note = Gtk.Label()
-        note.set_markup(
+        self._lbl_fps_note = Gtk.Label()
+        self._lbl_fps_note.set_markup(
             f'<small><i>Ohne Begrenzung: ≥{int(HIGH_FPS_THRESHOLD)} fps\n'
             f'→ Video-Bitrate wird verdoppelt.</i></small>'
         )
-        note.set_halign(Gtk.Align.START)
-        br_grid.attach(note, 0, 5, 2, 1)
+        self._lbl_fps_note.set_halign(Gtk.Align.START)
+        br_grid.attach(self._lbl_fps_note, 0, 5, 2, 1)
 
         # ---- Post-encoding action --------------------------------------
-        action_frame = Gtk.Frame(label="Aktion nach Kodierung")
+        self._frame_post_action = Gtk.Frame(label="Aktion nach Kodierung")
+        action_frame = self._frame_post_action
         action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         action_box.set_border_width(8)
         action_frame.add(action_box)
@@ -583,7 +651,8 @@ class MainWindow(Gtk.Window):
         return outer
 
     def _build_preview_panel(self) -> Gtk.Widget:
-        frame = Gtk.Frame(label="Vorschau")
+        self._frame_preview = Gtk.Frame(label="Vorschau")
+        frame = self._frame_preview
         frame.set_shadow_type(Gtk.ShadowType.IN)
         frame.set_size_request(-1, 230)
 
@@ -596,7 +665,7 @@ class MainWindow(Gtk.Window):
         self._preview_image.set_no_show_all(True)
 
         self._preview_label = Gtk.Label()
-        self._preview_label.set_markup("<i>Kein Video ausgewählt</i>")
+        self._preview_label.set_markup(i18n.t("lbl_no_video"))
         self._preview_label.set_sensitive(False)
 
         box.pack_start(self._preview_image, False, False, 0)
@@ -604,6 +673,105 @@ class MainWindow(Gtk.Window):
 
         frame.add(box)
         return frame
+
+    # ------------------------------------------------------------------
+    # Language switching
+    # ------------------------------------------------------------------
+
+    def _set_language(self, lang: str):
+        """Switch UI language, persist the choice, and refresh all labels."""
+        i18n.set_lang(lang)
+        self._apply_language()
+        self._save_settings()
+
+    def _apply_language(self):
+        """Update every translatable widget to the current i18n language."""
+        # Current language flag label for the MenuButton
+        lang_labels = {"en": "🇬🇧 English", "de": "🇩🇪 Deutsch"}
+        self._lang_btn.set_label(lang_labels.get(i18n._lang, "🇬🇧 English"))
+
+        # Toolbar buttons
+        self._btn_add.set_label(i18n.t("btn_add_files"))
+        self._btn_scan.set_label(i18n.t("btn_scan_folder"))
+        self._btn_remove.set_label(i18n.t("btn_remove"))
+        self._btn_encode.set_label(i18n.t("btn_encode_start"))
+        self._btn_cancel.set_label(i18n.t("btn_cancel"))
+
+        # File list frame
+        self._frame_input_files.set_label(i18n.t("frame_input_files"))
+
+        # TreeView column headers
+        self._col_filename.set_title(i18n.t("col_filename"))
+        self._col_directory.set_title(i18n.t("col_directory"))
+        self._col_status.set_title(i18n.t("col_status"))
+        self._col_progress.set_title(i18n.t("col_progress"))
+        self._col_resolution.set_title(i18n.t("col_resolution"))
+        self._col_vid_bitrate.set_title(i18n.t("col_vid_bitrate"))
+        self._col_aud_bitrate.set_title(i18n.t("col_aud_bitrate"))
+        self._col_fps.set_title(i18n.t("col_fps"))
+        self._col_duration.set_title(i18n.t("col_duration"))
+
+        # Settings frames
+        self._frame_output_path.set_label(i18n.t("frame_output_path"))
+        self._chk_src_dir.set_label(i18n.t("chk_src_dir"))
+        self._entry_outdir.set_placeholder_text(i18n.t("entry_outdir_ph"))
+        self._frame_output_name.set_label(i18n.t("frame_output_name"))
+        self._radio_new_name.set_label(i18n.t("radio_new_name"))
+        self._radio_same_name.set_label(i18n.t("radio_same_name"))
+        self._radio_replace.set_label(i18n.t("radio_replace"))
+        self._lbl_suffix.set_label(i18n.t("lbl_suffix"))
+
+        self._frame_bitrate.set_label(i18n.t("frame_bitrate"))
+        self._lbl_vid_bitrate.set_label(i18n.t("lbl_vid_bitrate"))
+        self._lbl_aud_bitrate.set_label(i18n.t("lbl_aud_bitrate"))
+        self._lbl_resolution.set_label(i18n.t("lbl_resolution"))
+        self._lbl_res_note.set_markup(i18n.t("res_note"))
+        self._chk_fps_limit.set_label(
+            i18n.t("chk_fps_limit").format(threshold=int(HIGH_FPS_THRESHOLD))
+        )
+        self._lbl_fps_note.set_markup(
+            i18n.t("fps_note").format(threshold=int(HIGH_FPS_THRESHOLD))
+        )
+
+        self._frame_post_action.set_label(i18n.t("frame_post_action"))
+        self._radio_action_nothing.set_label(i18n.t("radio_nothing"))
+        self._radio_action_quit.set_label(i18n.t("radio_quit"))
+        self._radio_action_shutdown.set_label(i18n.t("radio_shutdown"))
+
+        # Preview panel
+        self._frame_preview.set_label(i18n.t("frame_preview"))
+        # Only update the preview label if no video is being shown
+        if not self._preview_image.get_visible():
+            self._preview_label.set_markup(i18n.t("lbl_no_video"))
+
+        # Status bar (only reset if it still shows the "Ready" sentinel)
+        # We don't overwrite an active encoding status message.
+        current_status = self._status_label.get_text()
+        de_ready = "Bereit"
+        en_ready = "Ready"
+        if current_status in (de_ready, en_ready):
+            self._status_label.set_text(i18n.t("status_ready"))
+
+        # Re-populate the audio bitrate combo box
+        abr_idx = self._combo_abr.get_active()
+        self._combo_abr.remove_all()
+        abr_items = [i18n.t("audio_original")] + [lbl for lbl, _ in AUDIO_BITRATES[1:]]
+        for lbl in abr_items:
+            self._combo_abr.append_text(lbl)
+        self._combo_abr.set_active(abr_idx if 0 <= abr_idx < len(abr_items) else DEFAULT_AUDIO_IDX)
+
+        # Re-populate the resolution combo box
+        res_idx = self._combo_res.get_active()
+        self._combo_res.remove_all()
+        res_items = [i18n.t("res_original")] + [lbl for lbl, _ in RESOLUTIONS[1:]]
+        for lbl in res_items:
+            self._combo_res.append_text(lbl)
+        self._combo_res.set_active(res_idx if 0 <= res_idx < len(res_items) else DEFAULT_RES_IDX)
+
+        # The status column uses a cell_data_func that calls _status_str() on
+        # every render, so a language switch is reflected automatically.  We
+        # just need to force a redraw of the TreeView.
+        self._treeview.queue_draw()
 
     # ------------------------------------------------------------------
     # Signal Handlers
@@ -623,13 +791,12 @@ class MainWindow(Gtk.Window):
         for path in paths:
             self._add_file(path)
         n = len(paths)
-        self._status_label.set_text(
-            f"{n} Datei{'en' if n != 1 else ''} aus Scan zur Liste hinzugefügt."
-        )
+        s = "" if n == 1 else "en"
+        self._status_label.set_text(i18n.t("scan_added").format(n=n, s=s))
 
     def _on_add_files(self, *_):
         dialog = Gtk.FileChooserDialog(
-            title="Videodateien auswählen",
+            title=i18n.t("dlg_add_files_title"),
             parent=self,
             action=Gtk.FileChooserAction.OPEN,
         )
@@ -640,14 +807,14 @@ class MainWindow(Gtk.Window):
         dialog.set_select_multiple(True)
 
         filt = Gtk.FileFilter()
-        filt.set_name("Videodateien")
+        filt.set_name(i18n.t("dlg_filter_videos"))
         for ext in ["*.mp4", "*.mkv", "*.avi", "*.mov", "*.wmv",
                     "*.flv", "*.webm", "*.m4v", "*.ts", "*.mts"]:
             filt.add_pattern(ext)
         dialog.add_filter(filt)
 
         all_filt = Gtk.FileFilter()
-        all_filt.set_name("Alle Dateien")
+        all_filt.set_name(i18n.t("dlg_filter_all"))
         all_filt.add_pattern("*")
         dialog.add_filter(all_filt)
 
@@ -696,7 +863,7 @@ class MainWindow(Gtk.Window):
 
     def _on_browse_outdir(self, *_):
         dialog = Gtk.FileChooserDialog(
-            title="Ausgabeverzeichnis wählen",
+            title=i18n.t("dlg_browse_title"),
             parent=self,
             action=Gtk.FileChooserAction.SELECT_FOLDER,
         )
@@ -855,14 +1022,14 @@ class MainWindow(Gtk.Window):
 
     def _on_start_encode(self, *_):
         if not self._queue:
-            self._show_error("Keine Dateien in der Liste.")
+            self._show_error(i18n.t("err_no_files"))
             return
 
         use_src_dir  = self._chk_src_dir.get_active()
         output_dir   = self._entry_outdir.get_text().strip()
 
         if not use_src_dir and not output_dir:
-            self._show_error("Bitte ein Ausgabeverzeichnis auswählen.")
+            self._show_error(i18n.t("err_no_outdir"))
             return
 
         self._jobs: list[EncodeJob] = []
@@ -878,7 +1045,7 @@ class MainWindow(Gtk.Window):
     def _on_cancel(self, *_):
         self._encoder.cancel()
         self._btn_cancel.set_sensitive(False)
-        self._status_label.set_text("Wird abgebrochen…")
+        self._status_label.set_text(i18n.t("status_cancelling"))
 
     # ------------------------------------------------------------------
     # Encoding Logic
@@ -900,8 +1067,10 @@ class MainWindow(Gtk.Window):
 
         fps = get_fps(path)
         needs_fps_filter = job.fps_limit is not None and fps > job.fps_limit
-        fps_note = (f", HFR {fps:.1f} fps → Bitrate x2"
-                    if fps >= HIGH_FPS_THRESHOLD and not needs_fps_filter else "")
+        fps_note = (
+            i18n.t("fps_hfr_note").format(fps=fps)
+            if fps >= HIGH_FPS_THRESHOLD and not needs_fps_filter else ""
+        )
 
         target_h = job.resolution_height
         if target_h is not None:
@@ -912,8 +1081,13 @@ class MainWindow(Gtk.Window):
             res_note = ""
 
         self._status_label.set_text(
-            f"Kodiere {self._current_index + 1}/{len(self._jobs)}: "
-            f"{os.path.basename(path)}{res_note}{fps_note}"
+            i18n.t("encoding_status").format(
+                n=self._current_index + 1,
+                total=len(self._jobs),
+                name=os.path.basename(path),
+                res=res_note,
+                fps=fps_note,
+            )
         )
 
         def on_progress(frac):
@@ -942,7 +1116,7 @@ class MainWindow(Gtk.Window):
                 self._store.set_value(row_iter, COL_PROGRESS, 100)
                 self._completed.add(path)
                 self._save_queue()   # remove finished file from persistent list
-            elif msg == "Abgebrochen":
+            elif msg in ("Abgebrochen", "CANCELLED"):
                 self._store.set_value(row_iter, COL_STATUS,   STATUS_CANCELLED)
             else:
                 # Show first line in the column (space is limited) and open a
@@ -965,7 +1139,7 @@ class MainWindow(Gtk.Window):
         self._btn_encode.set_sensitive(True)
         self._btn_cancel.set_sensitive(False)
         self._global_progress.set_fraction(1.0)
-        self._status_label.set_text("Alle Aufgaben abgeschlossen.")
+        self._status_label.set_text(i18n.t("status_all_done"))
         if self._stop_after_path:
             self._set_stop_after(None)
 
@@ -993,9 +1167,9 @@ class MainWindow(Gtk.Window):
                     STATUS_PENDING,
                     0,
                     path,
-                    "Lädt…", "Lädt…",         # audio / sub labels
-                    "–", "–", "–", "–", "–",  # resolution / vid-br / aud-br / fps / duration
-                    "",                       # stop marker
+                    i18n.t("loading"), i18n.t("loading"),  # audio / sub labels
+                    "–", "–", "–", "–", "–",               # resolution / vid-br / aud-br / fps / duration
+                    "",                                     # stop marker
                 ])
             ),
         )
@@ -1103,9 +1277,8 @@ class MainWindow(Gtk.Window):
                 self._file_metadata[path] = meta
         for path, settings, meta in entries:
             self._add_file(path)
-        self._status_label.set_text(
-            f"{len(entries)} Datei(en) aus vorheriger Sitzung wiederhergestellt."
-        )
+        n = len(entries)
+        self._status_label.set_text(i18n.t("scan_restored").format(n=n))
 
     # ------------------------------------------------------------------
     # Global settings persistence
@@ -1136,6 +1309,7 @@ class MainWindow(Gtk.Window):
                 "naming":            naming,
                 "suffix":            self._entry_suffix.get_text(),
                 "post_action":       action,
+                "language":          i18n._lang,
             }
             with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2, ensure_ascii=False)
@@ -1187,6 +1361,12 @@ class MainWindow(Gtk.Window):
             self._radio_action_shutdown.set_active(True)
         else:
             self._radio_action_nothing.set_active(True)
+
+        # Restore saved language (default: "en")
+        saved_lang = data.get("language", "en")
+        if saved_lang in ("en", "de"):
+            i18n.set_lang(saved_lang)
+            self._apply_language()
 
     def _sync_queue_from_store(self):
         """Rebuild self._queue to match the current ListStore row order."""
@@ -1260,32 +1440,32 @@ class MainWindow(Gtk.Window):
 
     @staticmethod
     def _stream_summary(streams: list[dict]) -> str:
-        """Return a one-line summary for the column cell."""
         if not streams:
             return "–"
         total   = len(streams)
         enabled = sum(1 for s in streams if s["enabled"])
         if enabled == 0:
-            return f"Keine ({total})"
+            return i18n.t("stream_none").format(total=total)
         if enabled == total:
-            return f"Alle ({total})"
-        return f"{enabled}/{total} aktiv"
+            return i18n.t("stream_all").format(total=total)
+        return i18n.t("stream_active").format(enabled=enabled, total=total)
 
     @staticmethod
     def _stream_label(stream: dict, stype: str) -> str:
-        """Human-readable label for a single stream checkbox."""
         lang  = stream.get("language", "")
         title = stream.get("title", "")
         codec = stream.get("codec", "?")
-        name  = title or lang or "unbekannt"
+        name  = title or lang or i18n.t("stream_unknown")
         idx   = stream["rel_idx"] + 1
         if stype == "audio":
             ch = stream.get("channels", 0)
             layout = stream.get("channel_layout", "")
             ch_str = layout if layout else (f"{ch}ch" if ch else "")
-            return f"Spur {idx}: {name}  [{codec}, {ch_str}]"
+            return i18n.t("stream_track_audio").format(
+                idx=idx, name=name, codec=codec, ch_str=ch_str)
         else:
-            return f"Spur {idx}: {name}  [{codec}]"
+            return i18n.t("stream_track_sub").format(
+                idx=idx, name=name, codec=codec)
 
     def _update_stream_summary(self, file_path: str, tree_path):
         """Recalculate and write summary strings back to the ListStore."""
@@ -1315,7 +1495,7 @@ class MainWindow(Gtk.Window):
         self._preview_path = path
         self._preview_label.show()
         self._preview_image.hide()
-        self._preview_label.set_markup("<i>Lädt Vorschau…</i>")
+        self._preview_label.set_markup(i18n.t("lbl_loading_preview"))
 
         def _load():
             pixbuf = self._extract_thumbnail(path, max_w=580, max_h=220)
@@ -1327,7 +1507,7 @@ class MainWindow(Gtk.Window):
                     self._preview_image.show()
                     self._preview_label.hide()
                 else:
-                    self._preview_label.set_markup("<i>Vorschau nicht verfügbar</i>")
+                    self._preview_label.set_markup(i18n.t("lbl_preview_unavail"))
                 return False
             GLib.idle_add(_apply)
 
@@ -1337,7 +1517,7 @@ class MainWindow(Gtk.Window):
         self._preview_path = None
         self._preview_image.hide()
         self._preview_label.show()
-        self._preview_label.set_markup("<i>Kein Video ausgewählt</i>")
+        self._preview_label.set_markup(i18n.t("lbl_no_video"))
 
     @staticmethod
     def _extract_thumbnail(path: str, max_w: int = 580, max_h: int = 220):
@@ -1437,11 +1617,11 @@ class MainWindow(Gtk.Window):
         is_done = status in (STATUS_DONE, STATUS_CANCELLED) or status.startswith(STATUS_ERROR)
 
         # ---- Play / Show in folder --------------------------------------
-        item_play = Gtk.MenuItem(label="▶  Abspielen")
+        item_play = Gtk.MenuItem(label=i18n.t("ctx_play"))
         item_play.connect("activate", lambda _: self._play_file(file_path))
         menu.append(item_play)
 
-        item_folder = Gtk.MenuItem(label="📂  Im Ordner ansehen")
+        item_folder = Gtk.MenuItem(label=i18n.t("ctx_show_folder"))
         item_folder.connect("activate", lambda _: self._show_in_folder(file_path))
         menu.append(item_folder)
 
@@ -1450,7 +1630,7 @@ class MainWindow(Gtk.Window):
         # ---- Audio tracks -----------------------------------------------
         audio, subs = self._file_streams.get(file_path, ([], []))
 
-        audio_item = Gtk.MenuItem(label="Audiospuren")
+        audio_item = Gtk.MenuItem(label=i18n.t("ctx_audio_tracks"))
         if audio and not is_done:
             audio_sub = Gtk.Menu()
             for stream in audio:
@@ -1467,7 +1647,7 @@ class MainWindow(Gtk.Window):
         menu.append(audio_item)
 
         # ---- Subtitle tracks --------------------------------------------
-        sub_item = Gtk.MenuItem(label="Untertitel")
+        sub_item = Gtk.MenuItem(label=i18n.t("ctx_subtitles"))
         if subs and not is_done:
             sub_menu = Gtk.Menu()
             for stream in subs:
@@ -1487,10 +1667,10 @@ class MainWindow(Gtk.Window):
 
         # ---- Rotation ---------------------------------------------------
         rot_item = self._make_radio_submenu(
-            title="Drehung",
-            options=[("Keine Drehung", 0),
-                     ("90° im Uhrzeigersinn", 90),
-                     ("90° gegen Uhrzeigersinn", -90)],
+            title=i18n.t("ctx_rotation"),
+            options=[(i18n.t("ctx_rot_none"),  0),
+                     (i18n.t("ctx_rot_cw"),   90),
+                     (i18n.t("ctx_rot_ccw"), -90)],
             current=fs.get("rotation", 0),
             global_label=None,
             on_select=lambda v, fp=file_path:
@@ -1504,34 +1684,34 @@ class MainWindow(Gtk.Window):
         # ---- Per-file encoding settings ---------------------------------
         for item in [
             self._make_radio_submenu(
-                title="Video-Bitrate",
+                title=i18n.t("ctx_vid_bitrate"),
                 options=VIDEO_BITRATES,
                 current=fs.get("video_bitrate", "GLOBAL"),
-                global_label="Global verwenden",
+                global_label=i18n.t("ctx_global"),
                 on_select=lambda v, fp=file_path:
                     self._file_override_set(fp, "video_bitrate", v),
             ),
             self._make_radio_submenu(
-                title="Audio-Bitrate",
+                title=i18n.t("ctx_aud_bitrate"),
                 options=AUDIO_BITRATES,
                 current=fs.get("audio_bitrate", "GLOBAL") if "audio_bitrate" in fs else "GLOBAL",
-                global_label="Global verwenden",
+                global_label=i18n.t("ctx_global"),
                 on_select=lambda v, fp=file_path:
                     self._file_override_set(fp, "audio_bitrate", v),
             ),
             self._make_radio_submenu(
-                title="Auflösung",
+                title=i18n.t("ctx_resolution"),
                 options=RESOLUTIONS,
                 current=fs.get("resolution_height", "GLOBAL") if "resolution_height" in fs else "GLOBAL",
-                global_label="Global verwenden",
+                global_label=i18n.t("ctx_global"),
                 on_select=lambda v, fp=file_path:
                     self._file_override_set(fp, "resolution_height", v),
             ),
             self._make_radio_submenu(
-                title="FPS",
-                options=[("Original behalten", None), ("Auf 30 fps begrenzen", 30)],
+                title=i18n.t("ctx_fps"),
+                options=[(i18n.t("ctx_fps_keep"), None), (i18n.t("ctx_fps_limit30"), 30)],
                 current=fs.get("fps_limit", "GLOBAL") if "fps_limit" in fs else "GLOBAL",
-                global_label="Global verwenden",
+                global_label=i18n.t("ctx_global"),
                 on_select=lambda v, fp=file_path:
                     self._file_override_set(fp, "fps_limit", v),
             ),
@@ -1543,7 +1723,7 @@ class MainWindow(Gtk.Window):
 
         # ---- Stop after this file ---------------------------------------
         is_stop = self._stop_after_path == file_path
-        stop_label = "⏹  Nach dieser Datei stoppen ✓" if is_stop else "⏹  Nach dieser Datei stoppen"
+        stop_label = i18n.t("ctx_stop_after_set") if is_stop else i18n.t("ctx_stop_after")
         item_stop = Gtk.MenuItem(label=stop_label)
         item_stop.set_sensitive(not is_done)
         item_stop.connect(
@@ -1559,9 +1739,9 @@ class MainWindow(Gtk.Window):
                             and 0 <= self._current_index < len(self._jobs)
                             and self._jobs[self._current_index].input_path == file_path)
         if self._encoding_active and not is_encoding_this:
-            move_label = "⬆  Als nächstes kodieren"
+            move_label = i18n.t("ctx_encode_next")
         else:
-            move_label = "⬆  An den Anfang der Liste"
+            move_label = i18n.t("ctx_move_front")
         item_move = Gtk.MenuItem(label=move_label)
         item_move.set_sensitive(not is_done and not is_encoding_this)
         item_move.connect("activate", lambda _, fp=file_path: self._move_to_front(fp))
@@ -1570,7 +1750,7 @@ class MainWindow(Gtk.Window):
         menu.append(Gtk.SeparatorMenuItem())
 
         # ---- Remove from list -------------------------------------------
-        item_remove = Gtk.MenuItem(label="Aus Liste entfernen")
+        item_remove = Gtk.MenuItem(label=i18n.t("ctx_remove"))
         item_remove.connect("activate", lambda _, fp=file_path:
                             self._remove_file(fp))
         menu.append(item_remove)
@@ -1684,19 +1864,19 @@ class MainWindow(Gtk.Window):
     def _show_error_detail(self, filename: str, full_msg: str):
         """Show a dialog with the complete ffmpeg error output."""
         dlg = Gtk.Dialog(
-            title=f"Fehler – {filename}",
+            title=i18n.t("err_dialog_title").format(filename=filename),
             transient_for=self,
             modal=True,
         )
         dlg.set_default_size(640, 380)
-        dlg.add_button("Schließen", Gtk.ResponseType.CLOSE)
+        dlg.add_button(i18n.t("err_dialog_close"), Gtk.ResponseType.CLOSE)
 
         area = dlg.get_content_area()
         area.set_border_width(12)
         area.set_spacing(8)
 
         lbl = Gtk.Label()
-        lbl.set_markup("<b>ffmpeg-Ausgabe:</b>")
+        lbl.set_markup(i18n.t("err_ffmpeg_output"))
         lbl.set_halign(Gtk.Align.START)
         area.pack_start(lbl, False, False, 0)
 
@@ -1744,7 +1924,7 @@ class ScanDialog(Gtk.Window):
     _C_PATH   = 4
 
     def __init__(self, parent: Gtk.Window):
-        super().__init__(title="Ordner nach Videos scannen")
+        super().__init__(title=i18n.t("scan_win_title"))
         self.set_transient_for(parent)
         self.set_destroy_with_parent(True)
         self.set_default_size(740, 560)
@@ -1768,13 +1948,13 @@ class ScanDialog(Gtk.Window):
         bar.set_border_width(10)
         root.pack_start(bar, False, False, 0)
 
-        bar.pack_start(Gtk.Label(label="Ordner:"), False, False, 0)
+        bar.pack_start(Gtk.Label(label=i18n.t("scan_lbl_folder")), False, False, 0)
         self._entry_folder = Gtk.Entry()
-        self._entry_folder.set_placeholder_text("Ordner auswählen…")
+        self._entry_folder.set_placeholder_text(i18n.t("scan_entry_ph"))
         self._entry_folder.set_hexpand(True)
         bar.pack_start(self._entry_folder, True, True, 0)
 
-        btn_browse = Gtk.Button(label="Durchsuchen…")
+        btn_browse = Gtk.Button(label=i18n.t("scan_btn_browse"))
         btn_browse.connect("clicked", self._on_browse)
         bar.pack_start(btn_browse, False, False, 0)
 
@@ -1783,14 +1963,14 @@ class ScanDialog(Gtk.Window):
         bar2.set_margin_top(0)
         root.pack_start(bar2, False, False, 0)
 
-        bar2.pack_start(Gtk.Label(label="Bitrate-Schwelle:"), False, False, 0)
+        bar2.pack_start(Gtk.Label(label=i18n.t("scan_lbl_threshold")), False, False, 0)
         adj = Gtk.Adjustment(value=7000, lower=100, upper=200000,
                              step_increment=500, page_increment=5000)
         self._spin = Gtk.SpinButton(adjustment=adj, climb_rate=500, digits=0)
         self._spin.set_width_chars(8)
         bar2.pack_start(self._spin, False, False, 0)
-        bar2.pack_start(Gtk.Label(label="kbps  –  Videos"), False, False, 0)
-        hint = Gtk.Label(label="mit höherer Bitrate werden gefunden")
+        bar2.pack_start(Gtk.Label(label=i18n.t("scan_lbl_unit")), False, False, 0)
+        hint = Gtk.Label(label=i18n.t("scan_lbl_hint"))
         hint.set_sensitive(False)
         bar2.pack_start(hint, False, False, 0)
 
@@ -1800,12 +1980,12 @@ class ScanDialog(Gtk.Window):
         btn_box.set_margin_top(0)
         root.pack_start(btn_box, False, False, 0)
 
-        self._btn_scan = Gtk.Button(label="▶  Scannen starten")
+        self._btn_scan = Gtk.Button(label=i18n.t("scan_btn_start"))
         self._btn_scan.get_style_context().add_class("suggested-action")
         self._btn_scan.connect("clicked", self._on_scan)
         btn_box.pack_start(self._btn_scan, False, False, 0)
 
-        self._btn_stop = Gtk.Button(label="■  Stopp")
+        self._btn_stop = Gtk.Button(label=i18n.t("scan_btn_stop"))
         self._btn_stop.set_sensitive(False)
         self._btn_stop.connect("clicked", self._on_stop)
         btn_box.pack_start(self._btn_stop, False, False, 0)
@@ -1840,7 +2020,7 @@ class ScanDialog(Gtk.Window):
         # Filename
         name_cell = Gtk.CellRendererText()
         name_cell.set_property("ellipsize", Pango.EllipsizeMode.MIDDLE)
-        name_col = Gtk.TreeViewColumn("Dateiname", name_cell, text=self._C_NAME)
+        name_col = Gtk.TreeViewColumn(i18n.t("scan_col_filename"), name_cell, text=self._C_NAME)
         name_col.set_expand(True)
         name_col.set_resizable(True)
         tv.append_column(name_col)
@@ -1848,7 +2028,7 @@ class ScanDialog(Gtk.Window):
         # Directory
         dir_cell = Gtk.CellRendererText()
         dir_cell.set_property("ellipsize", Pango.EllipsizeMode.START)
-        dir_col = Gtk.TreeViewColumn("Verzeichnis", dir_cell, text=self._C_DIR)
+        dir_col = Gtk.TreeViewColumn(i18n.t("scan_col_directory"), dir_cell, text=self._C_DIR)
         dir_col.set_min_width(140)
         dir_col.set_resizable(True)
         tv.append_column(dir_col)
@@ -1856,7 +2036,7 @@ class ScanDialog(Gtk.Window):
         # Bitrate (rendered as formatted string)
         br_cell = Gtk.CellRendererText()
         br_cell.set_property("xalign", 1.0)
-        br_col = Gtk.TreeViewColumn("Bitrate", br_cell)
+        br_col = Gtk.TreeViewColumn(i18n.t("scan_col_bitrate"), br_cell)
         br_col.set_cell_data_func(br_cell, self._render_bitrate)
         br_col.set_min_width(100)
         tv.append_column(br_col)
@@ -1871,28 +2051,28 @@ class ScanDialog(Gtk.Window):
         bot.set_border_width(10)
         root.pack_start(bot, False, False, 0)
 
-        self._summary = Gtk.Label(label="Keine Ergebnisse.")
+        self._summary = Gtk.Label(label=i18n.t("scan_lbl_no_results"))
         self._summary.set_halign(Gtk.Align.START)
         bot.pack_start(self._summary, True, True, 0)
 
-        btn_all = Gtk.Button(label="Alle")
+        btn_all = Gtk.Button(label=i18n.t("scan_btn_all"))
         btn_all.connect("clicked", lambda *_: self._set_all(True))
         bot.pack_start(btn_all, False, False, 0)
 
-        btn_none = Gtk.Button(label="Keine")
+        btn_none = Gtk.Button(label=i18n.t("scan_btn_none"))
         btn_none.connect("clicked", lambda *_: self._set_all(False))
         bot.pack_start(btn_none, False, False, 0)
 
         sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         bot.pack_start(sep, False, False, 4)
 
-        self._btn_add = Gtk.Button(label="In Queue übernehmen")
+        self._btn_add = Gtk.Button(label=i18n.t("scan_btn_add_queue"))
         self._btn_add.get_style_context().add_class("suggested-action")
         self._btn_add.set_sensitive(False)
         self._btn_add.connect("clicked", self._on_add_to_queue)
         bot.pack_start(self._btn_add, False, False, 0)
 
-        btn_close = Gtk.Button(label="Schließen")
+        btn_close = Gtk.Button(label=i18n.t("scan_btn_close"))
         btn_close.connect("clicked", lambda *_: self.destroy())
         bot.pack_start(btn_close, False, False, 0)
 
@@ -1918,9 +2098,9 @@ class ScanDialog(Gtk.Window):
     def _refresh_summary(self):
         total    = len(self._store)
         selected = sum(1 for row in self._store if row[self._C_CHECK])
+        s = "s" if total != 1 else ""
         self._summary.set_text(
-            f"{total} Video{'s' if total != 1 else ''} gefunden  ·  "
-            f"{selected} ausgewählt"
+            i18n.t("scan_summary").format(total=total, s=s, selected=selected)
         )
         self._btn_add.set_sensitive(selected > 0)
 
@@ -1930,7 +2110,7 @@ class ScanDialog(Gtk.Window):
 
     def _on_browse(self, *_):
         dlg = Gtk.FileChooserDialog(
-            title="Ordner auswählen",
+            title=i18n.t("scan_entry_ph"),
             parent=self,
             action=Gtk.FileChooserAction.SELECT_FOLDER,
         )
@@ -1958,7 +2138,7 @@ class ScanDialog(Gtk.Window):
             dlg = Gtk.MessageDialog(transient_for=self, modal=True,
                                     message_type=Gtk.MessageType.ERROR,
                                     buttons=Gtk.ButtonsType.OK,
-                                    text=f'Ordner nicht gefunden:\n{folder}')
+                                    text=i18n.t("scan_folder_missing").format(folder=folder))
             dlg.run(); dlg.destroy()
             return
 
@@ -1969,7 +2149,7 @@ class ScanDialog(Gtk.Window):
         self._btn_stop.set_sensitive(True)
         self._btn_add.set_sensitive(False)
         self._prog_bar.set_fraction(0)
-        self._summary.set_text("Scanne…")
+        self._summary.set_text(i18n.t("scan_scanning"))
 
         threshold = int(self._spin.get_value())
 
@@ -1996,9 +2176,8 @@ class ScanDialog(Gtk.Window):
         if paths:
             self.emit("files-selected", paths)
             n = len(paths)
-            self._summary.set_text(
-                f"{n} Datei{'en' if n != 1 else ''} zur Konvertierungsliste hinzugefügt."
-            )
+            s = "en" if n != 1 else ""
+            self._summary.set_text(i18n.t("scan_n_added").format(n=n, s=s))
             self._btn_add.set_sensitive(False)
 
     # ------------------------------------------------------------------
@@ -2008,11 +2187,14 @@ class ScanDialog(Gtk.Window):
     def _update_progress(self, checked, total, found, current):
         if total > 0:
             self._prog_bar.set_fraction(checked / total)
-            label = (f"Geprüft: {checked} / {total}  ·  "
-                     f"Gefunden: {found}"
-                     + (f"  ·  {current}" if current else ""))
+            label = (
+                i18n.t("scan_progress_tpl").format(
+                    checked=checked, total=total, found=found
+                )
+                + (f"  ·  {current}" if current else "")
+            )
         else:
-            label = "Keine Videodateien gefunden."
+            label = i18n.t("scan_no_videos")
         self._prog_label.set_text(label)
         return False
 
@@ -2034,10 +2216,10 @@ class ScanDialog(Gtk.Window):
         self._prog_bar.set_fraction(1.0)
         total = len(self._store)
         if total == 0:
-            self._prog_label.set_text("Scan abgeschlossen – keine Videos über dem Schwellenwert.")
-            self._summary.set_text("Keine Ergebnisse.")
+            self._prog_label.set_text(i18n.t("scan_done_none"))
+            self._summary.set_text(i18n.t("scan_lbl_no_results"))
         else:
-            self._prog_label.set_text("Scan abgeschlossen.")
+            self._prog_label.set_text(i18n.t("scan_done"))
         return False
 
 
