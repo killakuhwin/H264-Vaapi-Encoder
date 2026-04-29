@@ -24,12 +24,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # English
     # ------------------------------------------------------------------
     "en": {
-        # Toolbar
+        # Toolbar buttons
         "btn_add_files":       "Add Files",
         "btn_scan_folder":     "Scan Folder",
         "btn_remove":          "Remove",
         "btn_encode_start":    "Start Encoding",
         "btn_cancel":          "Cancel",
+
+        # Toolbar tooltips
+        "tip_add_files":       "Add video files to the queue",
+        "tip_scan_folder":     "Scan a folder for videos above a bitrate threshold",
+        "tip_remove":          "Remove selected files from the list",
+        "tip_encode_start":    "Start encoding all pending files",
+        "tip_cancel":          "Cancel the current encoding",
+        "tip_lang":            "Change interface language",
 
         # File list frame
         "frame_input_files":   "Input Files",
@@ -185,12 +193,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # German (original strings)
     # ------------------------------------------------------------------
     "de": {
-        # Toolbar
+        # Toolbar buttons
         "btn_add_files":       "Dateien hinzufügen",
         "btn_scan_folder":     "Ordner scannen",
         "btn_remove":          "Entfernen",
         "btn_encode_start":    "Kodieren starten",
         "btn_cancel":          "Abbrechen",
+
+        # Toolbar tooltips
+        "tip_add_files":       "Videodateien zur Liste hinzufügen",
+        "tip_scan_folder":     "Ordner nach Videos über einem Bitrate-Schwellenwert durchsuchen",
+        "tip_remove":          "Ausgewählte Dateien aus der Liste entfernen",
+        "tip_encode_start":    "Alle ausstehenden Dateien kodieren",
+        "tip_cancel":          "Aktuelle Kodierung abbrechen",
+        "tip_lang":            "Sprache der Oberfläche ändern",
 
         # File list frame
         "frame_input_files":   "Eingabedateien",

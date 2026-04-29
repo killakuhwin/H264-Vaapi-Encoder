@@ -272,10 +272,31 @@ class MainWindow(Gtk.Window):
         self._btn_remove.connect("clicked", self._on_remove_selected)
         toolbar.insert(self._btn_remove, -1)
 
-        sep = Gtk.SeparatorToolItem()
-        sep.set_expand(True)
-        sep.set_draw(False)
-        toolbar.insert(sep, -1)
+        sep_left = Gtk.SeparatorToolItem()
+        sep_left.set_expand(True)
+        sep_left.set_draw(False)
+        toolbar.insert(sep_left, -1)
+
+        # Language selector – centered between the two button groups
+        self._lang_btn = Gtk.MenuButton()
+        self._lang_btn.set_label("🇬🇧 English")
+        lang_menu = Gtk.Menu()
+        item_en = Gtk.MenuItem(label="🇬🇧 English")
+        item_de = Gtk.MenuItem(label="🇩🇪 Deutsch")
+        item_en.connect("activate", lambda _: self._set_language("en"))
+        item_de.connect("activate", lambda _: self._set_language("de"))
+        lang_menu.append(item_en)
+        lang_menu.append(item_de)
+        lang_menu.show_all()
+        self._lang_btn.set_popup(lang_menu)
+        lang_tool = Gtk.ToolItem()
+        lang_tool.add(self._lang_btn)
+        toolbar.insert(lang_tool, -1)
+
+        sep_right = Gtk.SeparatorToolItem()
+        sep_right.set_expand(True)
+        sep_right.set_draw(False)
+        toolbar.insert(sep_right, -1)
 
         self._btn_encode = Gtk.ToolButton()
         self._btn_encode.set_label("Kodieren starten")
@@ -460,25 +481,7 @@ class MainWindow(Gtk.Window):
         tv.connect("drag-data-get",      self._on_drag_data_get)
         tv.connect("drag-data-received", self._on_drag_data)
 
-        # ---- Language button header ----------------------------------------
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        header.set_border_width(4)
-        self._lang_btn = Gtk.MenuButton()
-        self._lang_btn.set_label("🇬🇧 English")
-        lang_menu = Gtk.Menu()
-        item_en = Gtk.MenuItem(label="🇬🇧 English")
-        item_de = Gtk.MenuItem(label="🇩🇪 Deutsch")
-        item_en.connect("activate", lambda _: self._set_language("en"))
-        item_de.connect("activate", lambda _: self._set_language("de"))
-        lang_menu.append(item_en)
-        lang_menu.append(item_de)
-        lang_menu.show_all()
-        self._lang_btn.set_popup(lang_menu)
-        header.pack_end(self._lang_btn, False, False, 0)
-        vbox.pack_start(header, False, False, 0)
-        vbox.pack_start(sw, True, True, 0)
-        frame.add(vbox)
+        frame.add(sw)
         return frame
 
     def _build_settings(self) -> Gtk.Widget:
@@ -690,12 +693,18 @@ class MainWindow(Gtk.Window):
         lang_labels = {"en": "🇬🇧 English", "de": "🇩🇪 Deutsch"}
         self._lang_btn.set_label(lang_labels.get(i18n._lang, "🇬🇧 English"))
 
-        # Toolbar buttons
+        # Toolbar buttons + tooltips
         self._btn_add.set_label(i18n.t("btn_add_files"))
+        self._btn_add.set_tooltip_text(i18n.t("tip_add_files"))
         self._btn_scan.set_label(i18n.t("btn_scan_folder"))
+        self._btn_scan.set_tooltip_text(i18n.t("tip_scan_folder"))
         self._btn_remove.set_label(i18n.t("btn_remove"))
+        self._btn_remove.set_tooltip_text(i18n.t("tip_remove"))
         self._btn_encode.set_label(i18n.t("btn_encode_start"))
+        self._btn_encode.set_tooltip_text(i18n.t("tip_encode_start"))
         self._btn_cancel.set_label(i18n.t("btn_cancel"))
+        self._btn_cancel.set_tooltip_text(i18n.t("tip_cancel"))
+        self._lang_btn.set_tooltip_text(i18n.t("tip_lang"))
 
         # File list frame
         self._frame_input_files.set_label(i18n.t("frame_input_files"))
