@@ -87,4 +87,4 @@ python3 main.py
 1. Set your global encoding settings in the right-hand panel (bitrate, resolution, output directory).
 2. Use **Scan folder** to find files above a bitrate threshold, or drag files/folders directly onto the list.
 3. Optionally adjust per-file settings via right-click.
-4. Click **Kodieren starten** to begin encoding.
+4. Click **Start Encoding** to begin encoding.
