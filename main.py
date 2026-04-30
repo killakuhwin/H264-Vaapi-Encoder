@@ -480,11 +480,13 @@ class MainWindow(Gtk.Window):
             ],
             Gdk.DragAction.MOVE | Gdk.DragAction.COPY,
         )
-        tv.connect("button-press-event",  self._on_tv_button_press)
-        tv.connect("drag-motion",        self._on_drag_motion)
-        tv.connect("drag-leave",         self._on_drag_leave)
-        tv.connect("drag-data-get",      self._on_drag_data_get)
-        tv.connect("drag-data-received", self._on_drag_data)
+        tv.connect("button-press-event",   self._on_tv_button_press)
+        tv.connect("button-release-event", self._on_tv_button_release)
+        tv.connect("drag-begin",           self._on_drag_begin)
+        tv.connect("drag-motion",          self._on_drag_motion)
+        tv.connect("drag-leave",           self._on_drag_leave)
+        tv.connect("drag-data-get",        self._on_drag_data_get)
+        tv.connect("drag-data-received",   self._on_drag_data)
 
         frame.add(sw)
         return frame
@@ -968,13 +970,48 @@ class MainWindow(Gtk.Window):
         widget.set_drag_dest_row(None, Gtk.TreeViewDropPosition.BEFORE)
 
     def _on_tv_button_press(self, widget, event):
-        """Snapshot selection before GTK's default handler collapses it on click."""
-        model, paths = widget.get_selection().get_selected_rows()
+        """Snapshot selection and block GTK from collapsing it when clicking a selected row."""
+        if event.button != 1:
+            return False
+        model, tree_paths = widget.get_selection().get_selected_rows()
         self._drag_paths = [
             self._store.get_value(self._store.get_iter(p), COL_FULLPATH)
-            for p in paths
+            for p in tree_paths
         ]
-        return False  # let GTK handle the event normally
+        # If the clicked row is already part of a multi-selection, block GTK's
+        # default handler so the highlight stays on all selected rows during the drag.
+        # The deferred click is applied in button-release if no drag follows.
+        if len(tree_paths) > 1:
+            hit = widget.get_path_at_pos(int(event.x), int(event.y))
+            if hit and widget.get_selection().path_is_selected(hit[0]):
+                self._deferred_click = (hit[0], event.state)
+                return True  # block GTK's selection-collapse
+        self._deferred_click = None
+        return False
+
+    def _on_tv_button_release(self, widget, event):
+        """Apply deferred selection change when click did not turn into a drag."""
+        if event.button != 1:
+            return False
+        deferred = getattr(self, "_deferred_click", None)
+        self._deferred_click = None
+        if deferred is None:
+            return False
+        clicked_path, state = deferred
+        sel = widget.get_selection()
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            if sel.path_is_selected(clicked_path):
+                sel.unselect_path(clicked_path)
+            else:
+                sel.select_path(clicked_path)
+        else:
+            sel.unselect_all()
+            sel.select_path(clicked_path)
+        return False
+
+    def _on_drag_begin(self, widget, ctx):
+        """Drag confirmed — cancel the deferred click (button-release must not act)."""
+        self._deferred_click = None
 
     def _on_drag_data_get(self, widget, ctx, data, info, time):
         """Supply all selected rows' full paths (newline-separated) as the drag payload."""
@@ -1010,8 +1047,9 @@ class MainWindow(Gtk.Window):
                 if pos in (Gtk.TreeViewDropPosition.BEFORE,
                            Gtk.TreeViewDropPosition.INTO_OR_BEFORE):
                     # Insert group before dest_iter preserving relative order.
-                    # Reverse iteration + always insert before dest keeps A,B,C order.
-                    for it in reversed(src_iters):
+                    # Each move_before(X, dest) places X immediately before dest,
+                    # pushing the previous element left → forward iteration gives A,B,C order.
+                    for it in src_iters:
                         self._store.move_before(it, dest_iter)
                 else:
                     # Insert group after dest_iter preserving relative order.
