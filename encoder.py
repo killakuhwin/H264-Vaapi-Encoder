@@ -29,8 +29,9 @@ class EncodeJob:
     resolution_height: Optional[int] = None      # None = keep original
     selected_audio: Optional[list[int]] = None   # rel. indices; None = all
     selected_subtitles: Optional[list[int]] = None  # rel. indices; None = none
-    rotation: int = 0  # user-requested additional rotation: 0 / 90 / -90
+    rotation: int = 0  # user-requested additional rotation: 0 / 90 / 180 / -90
     fps_limit: Optional[int] = None  # None = keep original fps
+    flip: int = 0      # 0 = none, 1 = horizontal (hflip), 2 = vertical (vflip)
     work_dir: Optional[str] = None   # if set: encode here, then copy to output_path
     source_rotation: int = 0  # display rotation from file metadata (0/90/180/270)
 
@@ -467,6 +468,7 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float,
     needs_sw = (
         job.resolution_height is not None
         or job.rotation != 0
+        or job.flip != 0
         or needs_fps_filter
         or job.source_rotation != 0
     )
@@ -487,6 +489,10 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float,
             filters.append("hflip,vflip")
         elif job.rotation == -90:
             filters.append("transpose=2")
+        if job.flip == 1:
+            filters.append("hflip")
+        elif job.flip == 2:
+            filters.append("vflip")
         if needs_fps_filter:
             filters.append(f"fps={job.fps_limit}")
         if job.resolution_height is not None:

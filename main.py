@@ -1183,6 +1183,7 @@ class MainWindow(Gtk.Window):
         resolution_height = fs.get("resolution_height", global_res)
         fps_limit         = fs.get("fps_limit",         global_fps)
         rotation          = fs.get("rotation", 0)
+        flip              = fs.get("flip", 0)
 
         src = self._file_metadata.get(path, {})
         if resolution_height is not None:
@@ -1210,6 +1211,7 @@ class MainWindow(Gtk.Window):
             selected_subtitles=sel_subs if sub_streams else None,
             rotation=rotation,
             fps_limit=fps_limit,
+            flip=flip,
             work_dir=work_dir,
             source_rotation=source_rotation,
         )
@@ -1782,10 +1784,11 @@ class MainWindow(Gtk.Window):
         self._preview_label.set_markup(i18n.t("lbl_loading_preview"))
 
         rotation = self._file_metadata.get(path, {}).get("rotation", 0)
+        flip     = self._file_settings.get(path, {}).get("flip", 0)
 
         def _load():
             pixbuf = self._extract_thumbnail(path, max_w=580, max_h=220,
-                                             rotation=rotation)
+                                             rotation=rotation, flip=flip)
             def _apply():
                 if self._preview_path != path:
                     return False   # selection changed while loading
@@ -1808,7 +1811,7 @@ class MainWindow(Gtk.Window):
 
     @staticmethod
     def _extract_thumbnail(path: str, max_w: int = 580, max_h: int = 220,
-                           rotation: int = 0):
+                           rotation: int = 0, flip: int = 0):
         """Return a GdkPixbuf thumbnail or None on failure."""
         try:
             filters = []
@@ -1823,6 +1826,10 @@ class MainWindow(Gtk.Window):
                 filters.append("transpose=2")
             elif rotation == 180:
                 filters.append("hflip,vflip")
+            if flip == 1:
+                filters.append("hflip")
+            elif flip == 2:
+                filters.append("vflip")
             filters.append(
                 f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease"
             )
@@ -1990,6 +1997,20 @@ class MainWindow(Gtk.Window):
         )
         rot_item.set_sensitive(not is_done)
         menu.append(rot_item)
+
+        # ---- Flip -------------------------------------------------------
+        flip_item = self._make_radio_submenu(
+            title=i18n.t("ctx_flip"),
+            options=[(i18n.t("ctx_flip_none"), 0),
+                     (i18n.t("ctx_flip_h"),    1),
+                     (i18n.t("ctx_flip_v"),    2)],
+            current=fs.get("flip", 0),
+            global_label=None,
+            on_select=lambda v, fp=file_path:
+                self._file_override_set(fp, "flip", v),
+        )
+        flip_item.set_sensitive(not is_done)
+        menu.append(flip_item)
 
         menu.append(Gtk.SeparatorMenuItem())
 
