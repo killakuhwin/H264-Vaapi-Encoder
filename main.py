@@ -146,7 +146,8 @@ def make_output_path(
     use_source_dir: bool,
     replace_original: bool,
     keep_name: bool,
-    custom_suffix: str,
+    custom_affix: str,
+    use_prefix: bool = False,
 ) -> str:
     """Compute the output file path from settings."""
     src_dir   = os.path.dirname(input_path)
@@ -162,7 +163,10 @@ def make_output_path(
     if keep_name:
         # Same filename, different directory — no conflict with the source.
         return os.path.join(target_dir, orig_name)
-    out_name = f"{base_name}{custom_suffix}.mp4"
+    if use_prefix:
+        out_name = f"{custom_affix}{base_name}.mp4"
+    else:
+        out_name = f"{base_name}{custom_affix}.mp4"
     return os.path.join(target_dir, out_name)
 
 
@@ -571,8 +575,11 @@ class MainWindow(Gtk.Window):
         naming_box.pack_start(self._radio_replace, False, False, 0)
 
         suffix_row = Gtk.Box(spacing=4)
-        self._lbl_suffix = Gtk.Label(label="Suffix:")
-        suffix_row.pack_start(self._lbl_suffix, False, False, 0)
+        self._combo_affix = Gtk.ComboBoxText()
+        self._combo_affix.append_text("Suffix")
+        self._combo_affix.append_text("Prefix")
+        self._combo_affix.set_active(0)
+        suffix_row.pack_start(self._combo_affix, False, False, 0)
         self._entry_suffix = Gtk.Entry()
         self._entry_suffix.set_text("_h264")
         self._entry_suffix.set_width_chars(10)
@@ -659,7 +666,7 @@ class MainWindow(Gtk.Window):
         outer.pack_end(Gtk.Box(), True, True, 0)  # spacer
 
         # Auto-save global settings whenever any control changes
-        for w in (self._combo_vbr, self._combo_abr, self._combo_res):
+        for w in (self._combo_vbr, self._combo_abr, self._combo_res, self._combo_affix):
             w.connect("changed", self._save_settings)
         for w in (self._chk_fps_limit, self._chk_src_dir, self._chk_work_dir,
                   self._radio_new_name, self._radio_same_name, self._radio_replace,
@@ -748,7 +755,13 @@ class MainWindow(Gtk.Window):
         self._radio_new_name.set_label(i18n.t("radio_new_name"))
         self._radio_same_name.set_label(i18n.t("radio_same_name"))
         self._radio_replace.set_label(i18n.t("radio_replace"))
-        self._lbl_suffix.set_label(i18n.t("lbl_suffix"))
+        active = self._combo_affix.get_active()
+        self._combo_affix.handler_block_by_func(self._save_settings)
+        self._combo_affix.remove_all()
+        self._combo_affix.append_text(i18n.t("affix_suffix"))
+        self._combo_affix.append_text(i18n.t("affix_prefix"))
+        self._combo_affix.set_active(active)
+        self._combo_affix.handler_unblock_by_func(self._save_settings)
 
         self._frame_bitrate.set_label(i18n.t("frame_bitrate"))
         self._lbl_vid_bitrate.set_label(i18n.t("lbl_vid_bitrate"))
@@ -1024,7 +1037,8 @@ class MainWindow(Gtk.Window):
         replace_orig  = self._radio_replace.get_active()
         keep_name     = self._radio_same_name.get_active()
         output_dir    = self._entry_outdir.get_text().strip()
-        custom_suffix = self._entry_suffix.get_text().strip()
+        custom_affix  = self._entry_suffix.get_text().strip()
+        use_prefix    = self._combo_affix.get_active() == 1
         work_dir = (self._entry_work_dir.get_text().strip()
                     if self._chk_work_dir.get_active() else None)
         work_dir = work_dir or None  # treat empty string as None
@@ -1039,7 +1053,8 @@ class MainWindow(Gtk.Window):
             use_source_dir=use_src_dir,
             replace_original=replace_orig,
             keep_name=keep_name,
-            custom_suffix=custom_suffix,
+            custom_affix=custom_affix,
+            use_prefix=use_prefix,
         )
         fs = self._file_settings.get(path, {})
         video_bitrate     = fs.get("video_bitrate",     global_vbr)
@@ -1365,6 +1380,7 @@ class MainWindow(Gtk.Window):
                 "work_dir_enabled":  self._chk_work_dir.get_active(),
                 "work_dir":          self._entry_work_dir.get_text(),
                 "naming":            naming,
+                "affix_mode":        "prefix" if self._combo_affix.get_active() == 1 else "suffix",
                 "suffix":            self._entry_suffix.get_text(),
                 "post_action":       action,
                 "language":          i18n._lang,
@@ -1408,6 +1424,9 @@ class MainWindow(Gtk.Window):
             self._radio_replace.set_active(True)
         else:
             self._radio_new_name.set_active(True)
+
+        affix_mode = data.get("affix_mode", "suffix")
+        self._combo_affix.set_active(1 if affix_mode == "prefix" else 0)
 
         suffix = data.get("suffix", "_h264")
         self._entry_suffix.set_text(suffix)

@@ -63,7 +63,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "radio_new_name":      "Use new name",
         "radio_same_name":     "Keep same filename",
         "radio_replace":       "Replace source file (delete original)",
-        "lbl_suffix":          "Suffix:",
+        "affix_suffix":        "Suffix",
+        "affix_prefix":        "Prefix",
 
         "frame_bitrate":       "Bitrate Settings",
         "lbl_vid_bitrate":     "Video Bitrate:",
@@ -234,7 +235,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "radio_new_name":      "Neuen Namen verwenden",
         "radio_same_name":     "Gleichen Dateinamen behalten",
         "radio_replace":       "Quelldatei ersetzen (Original löschen)",
-        "lbl_suffix":          "Suffix:",
+        "affix_suffix":        "Suffix",
+        "affix_prefix":        "Präfix",
 
         "frame_bitrate":       "Bitrate-Einstellungen",
         "lbl_vid_bitrate":     "Video-Bitrate:",
