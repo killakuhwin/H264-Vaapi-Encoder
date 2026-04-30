@@ -517,6 +517,24 @@ class MainWindow(Gtk.Window):
         self._btn_browse_outdir.set_sensitive(False)
         out_box.pack_start(dir_row, False, False, 0)
 
+        # Work directory (optional temp encode location)
+        self._chk_work_dir = Gtk.CheckButton(
+            label="Arbeitsverzeichnis nutzen (erst dort kodieren, dann kopieren)"
+        )
+        self._chk_work_dir.connect("toggled", self._on_work_dir_toggled)
+        out_box.pack_start(self._chk_work_dir, False, False, 0)
+
+        work_row = Gtk.Box(spacing=4)
+        self._entry_work_dir = Gtk.Entry()
+        self._entry_work_dir.set_placeholder_text("Arbeitsverzeichnis wählen…")
+        self._entry_work_dir.set_sensitive(False)
+        work_row.pack_start(self._entry_work_dir, True, True, 0)
+        self._btn_browse_workdir = Gtk.Button(label="…")
+        self._btn_browse_workdir.connect("clicked", self._on_browse_workdir)
+        self._btn_browse_workdir.set_sensitive(False)
+        work_row.pack_start(self._btn_browse_workdir, False, False, 0)
+        out_box.pack_start(work_row, False, False, 0)
+
         Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
 
         # Output naming
@@ -643,12 +661,12 @@ class MainWindow(Gtk.Window):
         # Auto-save global settings whenever any control changes
         for w in (self._combo_vbr, self._combo_abr, self._combo_res):
             w.connect("changed", self._save_settings)
-        for w in (self._chk_fps_limit, self._chk_src_dir,
+        for w in (self._chk_fps_limit, self._chk_src_dir, self._chk_work_dir,
                   self._radio_new_name, self._radio_same_name, self._radio_replace,
                   self._radio_action_nothing, self._radio_action_quit,
                   self._radio_action_shutdown):
             w.connect("toggled", self._save_settings)
-        for w in (self._entry_suffix, self._entry_outdir):
+        for w in (self._entry_suffix, self._entry_outdir, self._entry_work_dir):
             w.connect("changed", self._save_settings)
 
         return outer
@@ -724,6 +742,8 @@ class MainWindow(Gtk.Window):
         self._frame_output_path.set_label(i18n.t("frame_output_path"))
         self._chk_src_dir.set_label(i18n.t("chk_src_dir"))
         self._entry_outdir.set_placeholder_text(i18n.t("entry_outdir_ph"))
+        self._chk_work_dir.set_label(i18n.t("chk_work_dir"))
+        self._entry_work_dir.set_placeholder_text(i18n.t("entry_work_dir_ph"))
         self._frame_output_name.set_label(i18n.t("frame_output_name"))
         self._radio_new_name.set_label(i18n.t("radio_new_name"))
         self._radio_same_name.set_label(i18n.t("radio_same_name"))
@@ -888,6 +908,25 @@ class MainWindow(Gtk.Window):
             self._entry_outdir.set_text(dialog.get_filename())
         dialog.destroy()
 
+    def _on_work_dir_toggled(self, btn):
+        active = btn.get_active()
+        self._entry_work_dir.set_sensitive(active)
+        self._btn_browse_workdir.set_sensitive(active)
+
+    def _on_browse_workdir(self, *_):
+        dialog = Gtk.FileChooserDialog(
+            title=i18n.t("dlg_browse_title"),
+            parent=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN,   Gtk.ResponseType.OK,
+        )
+        if dialog.run() == Gtk.ResponseType.OK:
+            self._entry_work_dir.set_text(dialog.get_filename())
+        dialog.destroy()
+
     def _on_drag_motion(self, widget, ctx, x, y, time):
         """Show the row-level drop-indicator line while dragging."""
         drop = widget.get_dest_row_at_pos(x, y)
@@ -986,6 +1025,9 @@ class MainWindow(Gtk.Window):
         keep_name     = self._radio_same_name.get_active()
         output_dir    = self._entry_outdir.get_text().strip()
         custom_suffix = self._entry_suffix.get_text().strip()
+        work_dir = (self._entry_work_dir.get_text().strip()
+                    if self._chk_work_dir.get_active() else None)
+        work_dir = work_dir or None  # treat empty string as None
         global_vbr    = VIDEO_BITRATES[self._combo_vbr.get_active()][1]
         global_abr    = AUDIO_BITRATES[self._combo_abr.get_active()][1]
         global_res    = RESOLUTIONS[self._combo_res.get_active()][1]
@@ -1031,6 +1073,7 @@ class MainWindow(Gtk.Window):
             selected_subtitles=sel_subs if sub_streams else None,
             rotation=rotation,
             fps_limit=fps_limit,
+            work_dir=work_dir,
         )
 
     def _on_start_encode(self, *_):
@@ -1319,6 +1362,8 @@ class MainWindow(Gtk.Window):
                 "fps_limit":         self._chk_fps_limit.get_active(),
                 "src_dir":           self._chk_src_dir.get_active(),
                 "out_dir":           self._entry_outdir.get_text(),
+                "work_dir_enabled":  self._chk_work_dir.get_active(),
+                "work_dir":          self._entry_work_dir.get_text(),
                 "naming":            naming,
                 "suffix":            self._entry_suffix.get_text(),
                 "post_action":       action,
@@ -1366,6 +1411,16 @@ class MainWindow(Gtk.Window):
 
         suffix = data.get("suffix", "_h264")
         self._entry_suffix.set_text(suffix)
+
+        work_dir_enabled = data.get("work_dir_enabled", False)
+        self._chk_work_dir.set_active(work_dir_enabled)
+        work_dir = data.get("work_dir", "")
+        if work_dir:
+            self._entry_work_dir.set_text(work_dir)
+        # Sync sensitivity (toggled signal not fired when set_active is called
+        # before the widget tree is fully shown).
+        self._entry_work_dir.set_sensitive(work_dir_enabled)
+        self._btn_browse_workdir.set_sensitive(work_dir_enabled)
 
         action = data.get("post_action", "nothing")
         if action == "quit":

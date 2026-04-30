@@ -5,6 +5,7 @@ import glob
 import collections
 import threading
 import queue
+import shutil
 import time
 from dataclasses import dataclass
 from typing import Optional, Callable
@@ -29,6 +30,7 @@ class EncodeJob:
     selected_subtitles: Optional[list[int]] = None  # rel. indices; None = none
     rotation: int = 0  # 0 = none, 90 = clockwise, -90 = counter-clockwise
     fps_limit: Optional[int] = None  # None = keep original fps
+    work_dir: Optional[str] = None   # if set: encode here, then copy to output_path
 
 
 def probe_video(path: str) -> dict:
@@ -348,7 +350,8 @@ def _double_bitrate(bitrate_str: str) -> str:
     return f"{kbps * 2}k"
 
 
-def build_ffmpeg_cmd(job: EncodeJob, fps: float) -> list[str]:
+def build_ffmpeg_cmd(job: EncodeJob, fps: float,
+                     output_override: Optional[str] = None) -> list[str]:
     video_bitrate = job.video_bitrate
 
     # Applying an fps_limit means we're converting away from HFR, so
@@ -420,7 +423,7 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float) -> list[str]:
     if explicit_map and job.selected_subtitles:
         cmd += ["-c:s", "mov_text"]
 
-    cmd.append(job.output_path)
+    cmd.append(output_override if output_override is not None else job.output_path)
     return cmd
 
 
@@ -524,31 +527,49 @@ class Encoder:
             try:
                 fps = get_fps(job.input_path)
                 duration = get_duration(job.input_path)
-                cmd = build_ffmpeg_cmd(job, fps)
+
+                # If a work directory is set, FFmpeg writes there first;
+                # the file is copied to the real output_path afterwards.
+                if job.work_dir:
+                    os.makedirs(job.work_dir, exist_ok=True)
+                    encode_target = os.path.join(
+                        job.work_dir, os.path.basename(job.output_path)
+                    )
+                else:
+                    encode_target = job.output_path
+
+                cmd = build_ffmpeg_cmd(job, fps, output_override=encode_target)
                 hung, cancelled, recent = self._run_ffmpeg(cmd, duration, on_progress)
 
                 if cancelled:
-                    if os.path.exists(job.output_path):
-                        os.remove(job.output_path)
+                    if os.path.exists(encode_target):
+                        os.remove(encode_target)
                     on_done(False, "CANCELLED")
                     return
 
                 if hung:
-                    if os.path.exists(job.output_path):
-                        os.remove(job.output_path)
+                    if os.path.exists(encode_target):
+                        os.remove(encode_target)
                     on_done(False, f"ffmpeg hängt (kein Fortschritt nach "
                             f"{WATCHDOG_TIMEOUT}s).")
                     return
 
                 if self._process.returncode != 0:
-                    if os.path.exists(job.output_path):
-                        os.remove(job.output_path)
+                    if os.path.exists(encode_target):
+                        os.remove(encode_target)
                     error_lines = _filter_error_lines(recent)
                     detail = ("\n".join(error_lines[-15:])
                               if error_lines else "(keine Details)")
                     on_done(False, f"ffmpeg Fehler (Code {self._process.returncode})"
                             f"\n\n{detail}")
                     return
+
+                # Copy from work dir to final destination (blocks next encode).
+                if job.work_dir and encode_target != job.output_path:
+                    os.makedirs(os.path.dirname(os.path.abspath(job.output_path)),
+                                exist_ok=True)
+                    shutil.copy2(encode_target, job.output_path)
+                    os.remove(encode_target)
 
                 if job.replace_original:
                     os.replace(job.output_path, job.input_path)
