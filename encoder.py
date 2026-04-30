@@ -307,7 +307,7 @@ def get_file_metadata(path: str) -> dict:
     """
     out = dict(audio=[], subtitles=[], width=0, height=0,
                video_kbps=None, audio_kbps=None, fps=0.0, duration_secs=0.0,
-               rotation=0)
+               rotation=0, _probe_ver=2)
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
@@ -339,6 +339,16 @@ def get_file_metadata(path: str) -> dict:
             if ctype == "video" and not _is_attached_pic(stream):
                 w = stream.get("width",  0)
                 h = stream.get("height", 0)
+                # Apply SAR (non-square pixels) to get display dimensions.
+                # Example: 1204x720 SAR 1:3 → display width = 1204*(1/3) = 401.
+                sar_str = stream.get("sample_aspect_ratio", "")
+                if sar_str and sar_str not in ("0:1", "1:1"):
+                    try:
+                        sar_w, sar_h = map(int, sar_str.split(":"))
+                        if sar_w > 0 and sar_h > 0 and sar_w != sar_h:
+                            w = round(w * sar_w / sar_h)
+                    except Exception:
+                        pass
                 rotate = _detect_rotation(path, stream, fmt)
                 out["rotation"] = rotate
                 # For 90°/270° the display swaps axes.

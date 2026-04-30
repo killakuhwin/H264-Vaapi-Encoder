@@ -1260,6 +1260,8 @@ class MainWindow(Gtk.Window):
                 cached = None
             if cached and "rotation" not in cached:
                 cached = None
+            if cached and "_probe_ver" not in cached:
+                cached = None  # re-probe to pick up SAR-adjusted dimensions
             meta = cached or get_file_metadata(path)
 
             def _apply():
