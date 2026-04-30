@@ -284,19 +284,26 @@ def get_file_metadata(path: str) -> dict:
                 rotate_tag = tags.get("rotate") or tags.get("ROTATE")
                 if rotate_tag:
                     try:
-                        rotate = int(rotate_tag) % 360
+                        rotate = int(float(rotate_tag)) % 360
                     except Exception:
                         pass
                 if rotate == 0:
                     for sd in stream.get("side_data_list", []):
-                        if sd.get("type") == "Display Matrix":
+                        # ffprobe uses "side_data_type" in newer versions,
+                        # "type" in older ones.
+                        sd_type = sd.get("side_data_type") or sd.get("type", "")
+                        if "Display Matrix" in sd_type:
                             try:
-                                # side_data rotation value is the negative of
-                                # the clockwise display rotation.
+                                # rotation field is the negative of the CW angle.
                                 rotate = (-int(sd.get("rotation", 0))) % 360
                             except Exception:
                                 pass
                             break
+                print(f"[probe] {os.path.basename(path)}: "
+                      f"{w}x{h} rotate={rotate} "
+                      f"tags={dict(tags)} "
+                      f"side_data={stream.get('side_data_list', [])}",
+                      flush=True)
                 out["rotation"] = rotate
                 # For 90°/270° the display swaps axes.
                 if rotate in (90, 270):
