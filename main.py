@@ -1453,6 +1453,8 @@ class MainWindow(Gtk.Window):
     # ------------------------------------------------------------------
 
     def _save_settings(self, *_):
+        if getattr(self, "_loading_settings", False):
+            return
         try:
             os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
             if self._radio_same_name.get_active():
@@ -1494,6 +1496,17 @@ class MainWindow(Gtk.Window):
         except Exception:
             return
 
+        # Suppress _save_settings while restoring widgets — each set_active/
+        # set_text fires signals that would overwrite the file with the default
+        # language ("en") before the saved language is applied at the end.
+        self._loading_settings = True
+        try:
+            self._load_settings_data(data)
+        finally:
+            self._loading_settings = False
+        self._save_settings()   # one clean write with all values (incl. language)
+
+    def _load_settings_data(self, data: dict):
         vbr = data.get("video_bitrate_idx", DEFAULT_VIDEO_IDX)
         if 0 <= vbr < len(VIDEO_BITRATES):
             self._combo_vbr.set_active(vbr)
