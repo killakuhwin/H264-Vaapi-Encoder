@@ -1509,6 +1509,53 @@ class MainWindow(Gtk.Window):
                 job = self._jobs.pop(job_idx)
                 self._jobs.insert(insert_at, job)
 
+    def _move_all_to_front(self, paths: list):
+        """Move all given paths to the front of the queue, preserving their
+        relative order.  Files that are currently encoding or already done
+        are silently skipped."""
+        # Exclude the currently encoding file and done files.
+        skip = set()
+        if self._encoding_active and 0 <= self._current_index < len(self._jobs):
+            skip.add(self._jobs[self._current_index].input_path)
+        to_move = [p for p in paths
+                   if p not in skip
+                   and self._find_row(p) is not None]
+        if not to_move:
+            return
+
+        # Determine the anchor row after which we start inserting.
+        # anchor=None means "before the very first row".
+        if self._encoding_active and 0 <= self._current_index < len(self._jobs):
+            anchor_it = self._find_row(self._jobs[self._current_index].input_path)
+        else:
+            anchor_it = None
+
+        # Insert in order: move each file after the current anchor, then
+        # advance the anchor to that row → they land in the same relative order.
+        for p in to_move:
+            it = self._find_row(p)
+            self._store.move_after(it, anchor_it)
+            anchor_it = self._store.get_iter(self._store.get_path(it))
+
+        self._sync_queue_from_store()
+        self._save_queue()
+
+        # Keep _jobs in sync when encoding is active.
+        if self._encoding_active:
+            insert_at = self._current_index + 1
+            paths_set = set(to_move)
+            moved: dict = {}
+            remaining: list = []
+            for job in self._jobs:
+                if job.input_path in paths_set:
+                    moved[job.input_path] = job
+                else:
+                    remaining.append(job)
+            for p in reversed(to_move):
+                job = moved.get(p) or self._build_job(p)
+                remaining.insert(insert_at, job)
+            self._jobs[:] = remaining
+
     def _set_stop_after(self, path: Optional[str]):
         """Set (or clear) the stop-after marker. Pass None to clear."""
         # Clear old marker
@@ -1732,6 +1779,14 @@ class MainWindow(Gtk.Window):
                   if row_iter else STATUS_PENDING)
         is_done = status in (STATUS_DONE, STATUS_CANCELLED) or status.startswith(STATUS_ERROR)
 
+        # Collect all currently selected paths (right-clicked file included).
+        sel = treeview.get_selection()
+        _model, sel_tree_paths = sel.get_selected_rows()
+        all_selected = []
+        for tp in sel_tree_paths:
+            it = self._store.get_iter(tp)
+            all_selected.append(self._store.get_value(it, COL_FULLPATH))
+
         # ---- Play / Show in folder --------------------------------------
         item_play = Gtk.MenuItem(label=i18n.t("ctx_play"))
         item_play.connect("activate", lambda _: self._play_file(file_path))
@@ -1860,15 +1915,16 @@ class MainWindow(Gtk.Window):
             move_label = i18n.t("ctx_move_front")
         item_move = Gtk.MenuItem(label=move_label)
         item_move.set_sensitive(not is_done and not is_encoding_this)
-        item_move.connect("activate", lambda _, fp=file_path: self._move_to_front(fp))
+        item_move.connect("activate", lambda _, fps=all_selected:
+                          self._move_all_to_front(fps))
         menu.append(item_move)
 
         menu.append(Gtk.SeparatorMenuItem())
 
         # ---- Remove from list -------------------------------------------
         item_remove = Gtk.MenuItem(label=i18n.t("ctx_remove"))
-        item_remove.connect("activate", lambda _, fp=file_path:
-                            self._remove_file(fp))
+        item_remove.connect("activate", lambda _, fps=all_selected:
+                            [self._remove_file(fp) for fp in fps])
         menu.append(item_remove)
 
         menu.show_all()
