@@ -1625,6 +1625,10 @@ class MainWindow(Gtk.Window):
         """Return a GdkPixbuf thumbnail or None on failure."""
         try:
             filters = []
+            # Normalise non-square pixels to square display dimensions first.
+            # scale=iw*sar:ih converts e.g. 1204x720 SAR 1:3 → 401x720.
+            # This is a no-op when SAR is already 1:1.
+            filters += ["scale=iw*sar:ih", "setsar=1"]
             # Apply rotation explicitly; -noautorotate prevents double-rotation.
             if rotation == 90:
                 filters.append("transpose=1")
