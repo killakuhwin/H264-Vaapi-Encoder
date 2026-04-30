@@ -230,7 +230,7 @@ def _get_scan_info(path: str) -> tuple[Optional[int], float]:
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-show_format", path],
+             "-show_streams", "-show_format", "-show_private_data", path],
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode != 0:
@@ -311,7 +311,7 @@ def get_file_metadata(path: str) -> dict:
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-show_format", path],
+             "-show_streams", "-show_format", "-show_private_data", path],
             capture_output=True, text=True,
         )
         if result.returncode != 0:

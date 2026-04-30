@@ -880,6 +880,7 @@ class MainWindow(Gtk.Window):
                 self._queue.remove(full)
             self._file_streams.pop(full, None)
             self._file_settings.pop(full, None)
+            self._file_metadata.pop(full, None)
             self._completed.discard(full)
             model.remove(it)
         self._save_queue()
