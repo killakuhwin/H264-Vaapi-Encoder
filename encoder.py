@@ -483,6 +483,8 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float,
         filters: list[str] = []
         if job.rotation == 90:
             filters.append("transpose=1")
+        elif job.rotation == 180:
+            filters.append("hflip,vflip")
         elif job.rotation == -90:
             filters.append("transpose=2")
         if needs_fps_filter:

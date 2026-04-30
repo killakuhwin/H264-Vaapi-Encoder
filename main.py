@@ -227,6 +227,9 @@ class MainWindow(Gtk.Window):
         self.set_default_size(1200, 800)
         self.set_border_width(0)
         self.connect("delete-event", self._on_close)
+        self.connect("configure-event",   self._on_configure)
+        self.connect("window-state-event", self._on_window_state)
+        self._is_maximized = False
 
         self._encoder = Encoder()
         self._queue: list[str] = []   # paths in order
@@ -826,10 +829,40 @@ class MainWindow(Gtk.Window):
     # Signal Handlers
     # ------------------------------------------------------------------
 
+    def _on_configure(self, widget, event):
+        """Track window size so we can save it on close (ignore while maximized)."""
+        if not self._is_maximized:
+            self._last_window_size = (event.width, event.height)
+        return False
+
+    def _on_window_state(self, widget, event):
+        self._is_maximized = bool(
+            event.new_window_state & Gdk.WindowState.MAXIMIZED
+        )
+        return False
+
     def _on_close(self, *_):
         if self._encoding_active:
             self._encoder.cancel()
+        self._save_window_geometry()
         Gtk.main_quit()
+
+    def _save_window_geometry(self):
+        try:
+            os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+            try:
+                with open(SETTINGS_FILE, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                data = {}
+            w, h = getattr(self, "_last_window_size", self.get_size())
+            data["window_maximized"] = self._is_maximized
+            data["window_width"]     = w
+            data["window_height"]    = h
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            print(f"[settings] window geometry save error: {exc}", flush=True)
 
     def _on_scan_folder(self, *_):
         dlg = ScanDialog(parent=self)
@@ -1565,6 +1598,13 @@ class MainWindow(Gtk.Window):
             i18n.set_lang(saved_lang)
             self._apply_language()
 
+        # Restore window geometry
+        w = data.get("window_width",  1200)
+        h = data.get("window_height",  800)
+        self.resize(w, h)
+        if data.get("window_maximized", False):
+            self.maximize()
+
     def _sync_queue_from_store(self):
         """Rebuild self._queue to match the current ListStore row order."""
         it = self._store.get_iter_first()
@@ -1941,6 +1981,7 @@ class MainWindow(Gtk.Window):
             title=i18n.t("ctx_rotation"),
             options=[(i18n.t("ctx_rot_none"),  0),
                      (i18n.t("ctx_rot_cw"),   90),
+                     (i18n.t("ctx_rot_180"), 180),
                      (i18n.t("ctx_rot_ccw"), -90)],
             current=fs.get("rotation", 0),
             global_label=None,
