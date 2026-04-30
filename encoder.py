@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import re
 import glob
 import collections
 import threading
@@ -47,6 +48,65 @@ def probe_video(path: str) -> dict:
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
     data = json.loads(result.stdout)
     return data
+
+
+def _detect_rotation(path: str, stream: dict, fmt: dict) -> int:
+    """Return the display rotation (0/90/180/270) from every known location.
+
+    Checked in order:
+    1. stream.tags.rotate  – Android-style tag
+    2. stream.side_data_list Display Matrix – iOS / newer ffprobe
+    3. format.tags.rotate  – some encoders put it at container level
+    4. ffmpeg -i stderr    – fallback for tkhd matrix entries that ffprobe
+                             does not surface in its JSON output
+    """
+    tags = stream.get("tags", {})
+
+    # 1. Stream-level rotate tag
+    rotate_tag = tags.get("rotate") or tags.get("ROTATE")
+    if rotate_tag:
+        try:
+            return int(float(rotate_tag)) % 360
+        except Exception:
+            pass
+
+    # 2. Display Matrix side data (ffprobe uses "side_data_type" in newer
+    #    versions and "type" in older ones)
+    for sd in stream.get("side_data_list", []):
+        sd_type = sd.get("side_data_type") or sd.get("type", "")
+        if "Display Matrix" in sd_type or "display_matrix" in sd_type.lower():
+            try:
+                return (-int(sd.get("rotation", 0))) % 360
+            except Exception:
+                pass
+            break
+
+    # 3. Format-level rotate tag
+    fmt_rotate = fmt.get("tags", {}).get("rotate") or fmt.get("tags", {}).get("ROTATE")
+    if fmt_rotate:
+        try:
+            return int(float(fmt_rotate)) % 360
+        except Exception:
+            pass
+
+    # 4. Parse ffmpeg -i stderr for "rotate : 90" lines (tkhd matrix)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", path],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stderr.splitlines():
+            stripped = line.strip().lower()
+            if stripped.startswith("rotate"):
+                m = re.search(r":\s*(-?\d+)", stripped)
+                if m:
+                    val = int(m.group(1)) % 360
+                    if val in (90, 180, 270):
+                        return val
+    except Exception:
+        pass
+
+    return 0
 
 
 def _parse_fps(stream: dict) -> float:
@@ -279,31 +339,7 @@ def get_file_metadata(path: str) -> dict:
             if ctype == "video" and not _is_attached_pic(stream):
                 w = stream.get("width",  0)
                 h = stream.get("height", 0)
-                # Detect display rotation from tag or Display Matrix side data.
-                rotate = 0
-                rotate_tag = tags.get("rotate") or tags.get("ROTATE")
-                if rotate_tag:
-                    try:
-                        rotate = int(float(rotate_tag)) % 360
-                    except Exception:
-                        pass
-                if rotate == 0:
-                    for sd in stream.get("side_data_list", []):
-                        # ffprobe uses "side_data_type" in newer versions,
-                        # "type" in older ones.
-                        sd_type = sd.get("side_data_type") or sd.get("type", "")
-                        if "Display Matrix" in sd_type:
-                            try:
-                                # rotation field is the negative of the CW angle.
-                                rotate = (-int(sd.get("rotation", 0))) % 360
-                            except Exception:
-                                pass
-                            break
-                print(f"[probe] {os.path.basename(path)}: "
-                      f"{w}x{h} rotate={rotate} "
-                      f"tags={dict(tags)} "
-                      f"side_data={stream.get('side_data_list', [])}",
-                      flush=True)
+                rotate = _detect_rotation(path, stream, fmt)
                 out["rotation"] = rotate
                 # For 90°/270° the display swaps axes.
                 if rotate in (90, 270):
