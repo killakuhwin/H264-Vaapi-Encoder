@@ -945,25 +945,49 @@ class MainWindow(Gtk.Window):
         dialog.destroy()
 
     def _on_drag_motion(self, widget, ctx, x, y, time):
-        """Show the row-level drop-indicator line while dragging."""
+        """Show the row-level drop-indicator line and auto-scroll near edges."""
+        # Auto-scroll when near top or bottom of the visible list area
+        _SCROLL_ZONE = 40
+        _SCROLL_STEP = 12
+        alloc = widget.get_allocation()
+        vadj = widget.get_vadjustment()
+        if y < _SCROLL_ZONE:
+            vadj.set_value(max(vadj.get_lower(), vadj.get_value() - _SCROLL_STEP))
+        elif y > alloc.height - _SCROLL_ZONE:
+            vadj.set_value(min(vadj.get_upper() - vadj.get_page_size(),
+                               vadj.get_value() + _SCROLL_STEP))
+
+        n = self._store.iter_n_children(None)
         drop = widget.get_dest_row_at_pos(x, y)
+
+        if drop is None and n > 0:
+            # get_dest_row_at_pos returns None both above the first row and
+            # below the last. Distinguish the two by comparing bin-window y
+            # against the first row's background rectangle.
+            _, by = widget.convert_widget_to_bin_window_coords(x, y)
+            first_path = self._store.get_path(self._store.iter_nth_child(None, 0))
+            first_rect = widget.get_background_area(first_path, None)
+            if by < first_rect.y + first_rect.height:
+                drop = (first_path, Gtk.TreeViewDropPosition.BEFORE)
+            # else: below last row → drop remains None (= append to end)
+
+        # Persist for _on_drag_data so both use the same resolved position
+        self._last_drop_pos = drop
+
         if drop is not None:
             path, pos = drop
             widget.set_drag_dest_row(path, pos)
-        else:
-            # Below all rows → indicator after the last row
-            n = self._store.iter_n_children(None)
-            if n > 0:
-                last_it = self._store.iter_nth_child(None, n - 1)
-                widget.set_drag_dest_row(
-                    self._store.get_path(last_it),
-                    Gtk.TreeViewDropPosition.AFTER,
-                )
-        # Tell GDK the drop is accepted and which action we'll perform
+        elif n > 0:
+            last_it = self._store.iter_nth_child(None, n - 1)
+            widget.set_drag_dest_row(
+                self._store.get_path(last_it),
+                Gtk.TreeViewDropPosition.AFTER,
+            )
+
         src = Gtk.drag_get_source_widget(ctx)
         action = Gdk.DragAction.MOVE if src is widget else Gdk.DragAction.COPY
         Gdk.drag_status(ctx, action, time)
-        return True   # we handled the motion
+        return True
 
     def _on_drag_leave(self, widget, ctx, time):
         """Clear the drop-indicator line when the drag leaves the widget."""
@@ -1035,10 +1059,11 @@ class MainWindow(Gtk.Window):
                 Gtk.drag_finish(drag_context, False, False, time)
                 return
 
-            drop = widget.get_dest_row_at_pos(x, y)
+            # Use the position resolved by _on_drag_motion (handles the
+            # above-first-row edge case that get_dest_row_at_pos misses).
+            drop = getattr(self, "_last_drop_pos", None)
             if drop is None:
-                # Drop onto empty space → append all to end in original order.
-                # move_before(it, None) moves to end; forward iteration preserves order.
+                # Below last row or empty list → append all to end.
                 for it in src_iters:
                     self._store.move_before(it, None)
             else:
