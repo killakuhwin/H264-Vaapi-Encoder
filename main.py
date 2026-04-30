@@ -322,13 +322,13 @@ class MainWindow(Gtk.Window):
         self._tr_widgets: dict[str, object] = {}
 
         # ---- Main area: paned (list | settings) ------------------------
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_border_width(8)
-        paned.set_position(520)
-        vbox.pack_start(paned, True, True, 0)
+        self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self._paned.set_border_width(8)
+        self._paned.set_position(780)
+        vbox.pack_start(self._paned, True, True, 0)
 
         # Left: file list
-        paned.pack1(self._build_file_list(), True, True)
+        self._paned.pack1(self._build_file_list(), True, True)
         # Right: settings + preview (vertical split)
         settings_scroll = Gtk.ScrolledWindow()
         settings_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -338,7 +338,7 @@ class MainWindow(Gtk.Window):
         right_pane.pack1(settings_scroll, True, True)
         right_pane.pack2(self._build_preview_panel(), False, False)
         right_pane.set_position(560)
-        paned.pack2(right_pane, False, False)
+        self._paned.pack2(right_pane, False, False)
 
         # ---- Status bar ------------------------------------------------
         status_box = Gtk.Box(spacing=8)
@@ -859,6 +859,7 @@ class MainWindow(Gtk.Window):
             data["window_maximized"] = self._is_maximized
             data["window_width"]     = w
             data["window_height"]    = h
+            data["pane_position"]    = self._paned.get_position()
             with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2, ensure_ascii=False)
         except Exception as exc:
@@ -1606,6 +1607,8 @@ class MainWindow(Gtk.Window):
         self.resize(w, h)
         if data.get("window_maximized", False):
             self.maximize()
+        if "pane_position" in data:
+            self._paned.set_position(data["pane_position"])
 
     def _sync_queue_from_store(self):
         """Rebuild self._queue to match the current ListStore row order."""
