@@ -245,7 +245,8 @@ def get_file_metadata(path: str) -> dict:
       duration_secs  – float
     """
     out = dict(audio=[], subtitles=[], width=0, height=0,
-               video_kbps=None, audio_kbps=None, fps=0.0, duration_secs=0.0)
+               video_kbps=None, audio_kbps=None, fps=0.0, duration_secs=0.0,
+               rotation=0)
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
@@ -275,8 +276,32 @@ def get_file_metadata(path: str) -> dict:
             title = tags.get("title")    or tags.get("TITLE")    or ""
 
             if ctype == "video" and not _is_attached_pic(stream):
-                out["width"]  = stream.get("width",  0)
-                out["height"] = stream.get("height", 0)
+                w = stream.get("width",  0)
+                h = stream.get("height", 0)
+                # Detect display rotation from tag or Display Matrix side data.
+                rotate = 0
+                rotate_tag = tags.get("rotate") or tags.get("ROTATE")
+                if rotate_tag:
+                    try:
+                        rotate = int(rotate_tag) % 360
+                    except Exception:
+                        pass
+                if rotate == 0:
+                    for sd in stream.get("side_data_list", []):
+                        if sd.get("type") == "Display Matrix":
+                            try:
+                                # side_data rotation value is the negative of
+                                # the clockwise display rotation.
+                                rotate = (-int(sd.get("rotation", 0))) % 360
+                            except Exception:
+                                pass
+                            break
+                out["rotation"] = rotate
+                # For 90°/270° the display swaps axes.
+                if rotate in (90, 270):
+                    out["width"], out["height"] = h, w
+                else:
+                    out["width"], out["height"] = w, h
                 vbr = stream.get("bit_rate")
                 if vbr:
                     out["video_kbps"] = max(1, int(vbr) // 1000)

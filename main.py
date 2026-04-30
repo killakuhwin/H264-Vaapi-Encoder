@@ -1255,6 +1255,8 @@ class MainWindow(Gtk.Window):
                 cached = None
             if cached and cached.get("fps", 0) > 300:
                 cached = None
+            if cached and "rotation" not in cached:
+                cached = None
             meta = cached or get_file_metadata(path)
 
             def _apply():
@@ -1587,8 +1589,11 @@ class MainWindow(Gtk.Window):
         self._preview_image.hide()
         self._preview_label.set_markup(i18n.t("lbl_loading_preview"))
 
+        rotation = self._file_metadata.get(path, {}).get("rotation", 0)
+
         def _load():
-            pixbuf = self._extract_thumbnail(path, max_w=580, max_h=220)
+            pixbuf = self._extract_thumbnail(path, max_w=580, max_h=220,
+                                             rotation=rotation)
             def _apply():
                 if self._preview_path != path:
                     return False   # selection changed while loading
@@ -1610,13 +1615,25 @@ class MainWindow(Gtk.Window):
         self._preview_label.set_markup(i18n.t("lbl_no_video"))
 
     @staticmethod
-    def _extract_thumbnail(path: str, max_w: int = 580, max_h: int = 220):
+    def _extract_thumbnail(path: str, max_w: int = 580, max_h: int = 220,
+                           rotation: int = 0):
         """Return a GdkPixbuf thumbnail or None on failure."""
         try:
+            filters = []
+            # Apply rotation explicitly; -noautorotate prevents double-rotation.
+            if rotation == 90:
+                filters.append("transpose=1")
+            elif rotation == 270:
+                filters.append("transpose=2")
+            elif rotation == 180:
+                filters.append("hflip,vflip")
+            filters.append(
+                f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease"
+            )
             result = subprocess.run(
-                ["ffmpeg", "-ss", "00:00:05", "-i", path,
+                ["ffmpeg", "-noautorotate", "-ss", "00:00:05", "-i", path,
                  "-vframes", "1",
-                 "-vf", f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease",
+                 "-vf", ",".join(filters),
                  "-f", "image2pipe", "-vcodec", "png", "pipe:1"],
                 capture_output=True, timeout=15,
             )
