@@ -28,9 +28,10 @@ class EncodeJob:
     resolution_height: Optional[int] = None      # None = keep original
     selected_audio: Optional[list[int]] = None   # rel. indices; None = all
     selected_subtitles: Optional[list[int]] = None  # rel. indices; None = none
-    rotation: int = 0  # 0 = none, 90 = clockwise, -90 = counter-clockwise
+    rotation: int = 0  # user-requested additional rotation: 0 / 90 / -90
     fps_limit: Optional[int] = None  # None = keep original fps
     work_dir: Optional[str] = None   # if set: encode here, then copy to output_path
+    source_rotation: int = 0  # display rotation from file metadata (0/90/180/270)
 
 
 def probe_video(path: str) -> dict:
@@ -407,10 +408,14 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float,
     device = find_vaapi_device()
 
     # SW-decode pipeline whenever any CPU-side filter is needed.
+    # source_rotation != 0: VAAPI HW-decode does not apply rotation metadata,
+    # so we force SW-decode which auto-rotates and bakes the orientation into
+    # the output pixels (clearing the rotation tag from the output).
     needs_sw = (
         job.resolution_height is not None
         or job.rotation != 0
         or needs_fps_filter
+        or job.source_rotation != 0
     )
 
     if needs_sw:

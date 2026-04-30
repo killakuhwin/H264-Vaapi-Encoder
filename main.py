@@ -1074,6 +1074,7 @@ class MainWindow(Gtk.Window):
                 if src_audio_kbps <= int(audio_bitrate.rstrip("k")):
                     audio_bitrate = None
 
+        source_rotation = self._file_metadata.get(path, {}).get("rotation", 0)
         audio_streams, sub_streams = self._file_streams.get(path, ([], []))
         sel_audio = [s["rel_idx"] for s in audio_streams if s["enabled"]]
         sel_subs  = [s["rel_idx"] for s in sub_streams  if s["enabled"]]
@@ -1089,6 +1090,7 @@ class MainWindow(Gtk.Window):
             rotation=rotation,
             fps_limit=fps_limit,
             work_dir=work_dir,
+            source_rotation=source_rotation,
         )
 
     def _on_start_encode(self, *_):
