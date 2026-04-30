@@ -967,50 +967,65 @@ class MainWindow(Gtk.Window):
         widget.set_drag_dest_row(None, Gtk.TreeViewDropPosition.BEFORE)
 
     def _on_drag_data_get(self, widget, ctx, data, info, time):
-        """Supply the dragged row's full path as the drag payload."""
+        """Supply all selected rows' full paths (newline-separated) as the drag payload."""
         model, paths = widget.get_selection().get_selected_rows()
         if paths:
-            it = self._store.get_iter(paths[0])
-            file_path = self._store.get_value(it, COL_FULLPATH)
-            data.set(data.get_target(), 8, file_path.encode("utf-8"))
+            file_paths = [self._store.get_value(self._store.get_iter(p), COL_FULLPATH) for p in paths]
+            data.set(data.get_target(), 8, "\n".join(file_paths).encode("utf-8"))
 
     def _on_drag_data(self, widget, drag_context, x, y, data, info, time):
         if info == 0:
             # ---- Internal row reorder -----------------------------------
             try:
-                file_path = data.get_data().decode("utf-8")
+                file_paths = data.get_data().decode("utf-8").split("\n")
             except Exception:
                 Gtk.drag_finish(drag_context, False, False, time)
                 return
-            src_iter = self._find_row(file_path)
-            if src_iter:
-                drop = widget.get_dest_row_at_pos(x, y)
-                if drop is None:
-                    self._store.move_before(src_iter, None)   # to end
+
+            # Resolve iters for all dragged paths (skip missing rows)
+            src_iters = [self._find_row(fp) for fp in file_paths]
+            src_iters = [it for it in src_iters if it is not None]
+            if not src_iters:
+                Gtk.drag_finish(drag_context, False, False, time)
+                return
+
+            drop = widget.get_dest_row_at_pos(x, y)
+            if drop is None:
+                # Drop onto empty space → append all to end in original order.
+                # move_before(it, None) moves to end; forward iteration preserves order.
+                for it in src_iters:
+                    self._store.move_before(it, None)
+            else:
+                dest_path, pos = drop
+                dest_iter = self._store.get_iter(dest_path)
+                if pos in (Gtk.TreeViewDropPosition.BEFORE,
+                           Gtk.TreeViewDropPosition.INTO_OR_BEFORE):
+                    # Insert group before dest_iter preserving relative order.
+                    # Reverse iteration + always insert before dest keeps A,B,C order.
+                    for it in reversed(src_iters):
+                        self._store.move_before(it, dest_iter)
                 else:
-                    dest_path, pos = drop
-                    dest_iter = self._store.get_iter(dest_path)
-                    if pos in (Gtk.TreeViewDropPosition.BEFORE,
-                               Gtk.TreeViewDropPosition.INTO_OR_BEFORE):
-                        self._store.move_before(src_iter, dest_iter)
-                    else:
-                        self._store.move_after(src_iter, dest_iter)
-                # Sync queue immediately — don't rely on rows-reordered signal
-                # whose gint* new_order array can fail to marshal in PyGObject.
-                self._sync_queue_from_store()
-                self._save_queue()
-                # Mirror the new order into self._jobs so _encode_next
-                # uses the correct sequence during active encoding.
-                # Files added after encoding started won't be in jobs_by_path,
-                # so build fresh jobs for them on demand.
-                if self._encoding_active and hasattr(self, "_jobs"):
-                    jobs_by_path = {j.input_path: j for j in self._jobs}
-                    new_jobs = [
-                        jobs_by_path[p] if p in jobs_by_path else self._build_job(p)
-                        for p in self._queue
-                    ]
-                    self._jobs[:] = new_jobs
-            Gtk.drag_finish(drag_context, src_iter is not None, False, time)
+                    # Insert group after dest_iter preserving relative order.
+                    # Anchor technique: move each file after the previous one.
+                    anchor = dest_iter
+                    for it in src_iters:
+                        self._store.move_after(it, anchor)
+                        anchor = it
+
+            # Sync queue immediately — don't rely on rows-reordered signal
+            # whose gint* new_order array can fail to marshal in PyGObject.
+            self._sync_queue_from_store()
+            self._save_queue()
+            # Mirror the new order into self._jobs so _encode_next
+            # uses the correct sequence during active encoding.
+            if self._encoding_active and hasattr(self, "_jobs"):
+                jobs_by_path = {j.input_path: j for j in self._jobs}
+                new_jobs = [
+                    jobs_by_path[p] if p in jobs_by_path else self._build_job(p)
+                    for p in self._queue
+                ]
+                self._jobs[:] = new_jobs
+            Gtk.drag_finish(drag_context, True, False, time)
             return
 
         # ---- External file / folder drop (text/uri-list) ----------------
