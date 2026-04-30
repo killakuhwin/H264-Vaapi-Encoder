@@ -480,7 +480,7 @@ class MainWindow(Gtk.Window):
             ],
             Gdk.DragAction.MOVE | Gdk.DragAction.COPY,
         )
-        tv.connect("drag-begin",         self._on_drag_begin)
+        tv.connect("button-press-event",  self._on_tv_button_press)
         tv.connect("drag-motion",        self._on_drag_motion)
         tv.connect("drag-leave",         self._on_drag_leave)
         tv.connect("drag-data-get",      self._on_drag_data_get)
@@ -967,20 +967,18 @@ class MainWindow(Gtk.Window):
         """Clear the drop-indicator line when the drag leaves the widget."""
         widget.set_drag_dest_row(None, Gtk.TreeViewDropPosition.BEFORE)
 
-    def _on_drag_begin(self, widget, ctx):
-        """Snapshot the full selection before GTK collapses it to the dragged row."""
+    def _on_tv_button_press(self, widget, event):
+        """Snapshot selection before GTK's default handler collapses it on click."""
         model, paths = widget.get_selection().get_selected_rows()
         self._drag_paths = [
             self._store.get_value(self._store.get_iter(p), COL_FULLPATH)
             for p in paths
         ]
+        return False  # let GTK handle the event normally
 
     def _on_drag_data_get(self, widget, ctx, data, info, time):
         """Supply all selected rows' full paths (newline-separated) as the drag payload."""
-        file_paths = getattr(self, "_drag_paths", None)
-        if not file_paths:
-            model, paths = widget.get_selection().get_selected_rows()
-            file_paths = [self._store.get_value(self._store.get_iter(p), COL_FULLPATH) for p in paths]
+        file_paths = getattr(self, "_drag_paths", None) or []
         if file_paths:
             data.set(data.get_target(), 8, "\n".join(file_paths).encode("utf-8"))
 
