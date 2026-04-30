@@ -1249,8 +1249,11 @@ class MainWindow(Gtk.Window):
         # (happens on queue restore), otherwise probe via ffprobe.
         def _probe():
             cached = self._file_metadata.get(path)
-            # Re-probe if audio streams exist but bitrate wasn't detected last time.
+            # Re-probe if audio streams exist but bitrate wasn't detected last time,
+            # or if fps looks like a raw codec timebase (> 300 fps).
             if cached and cached.get("audio") and cached.get("audio_kbps") is None:
+                cached = None
+            if cached and cached.get("fps", 0) > 300:
                 cached = None
             meta = cached or get_file_metadata(path)
 

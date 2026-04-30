@@ -48,15 +48,44 @@ def probe_video(path: str) -> dict:
     return data
 
 
+def _parse_fps(stream: dict) -> float:
+    """Return fps from a stream dict, preferring avg_frame_rate over r_frame_rate.
+
+    r_frame_rate for HEVC/H.264 often contains the codec timebase (90000/1)
+    rather than the actual playback rate.  avg_frame_rate is reliable for
+    constant-framerate content; we fall back to r_frame_rate only when
+    avg_frame_rate is absent or zero.  Values above 300 fps are rejected as
+    clearly bogus (codec timebase artefact).
+    """
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        raw = stream.get(key, "0/1")
+        try:
+            num, den = raw.split("/")
+            fps = float(num) / float(den) if float(den) != 0 else 0.0
+            if 0 < fps <= 300:
+                return fps
+        except Exception:
+            pass
+    return 0.0
+
+
+def _is_attached_pic(stream: dict) -> bool:
+    """Return True for cover-art / thumbnail streams embedded in MP4/MKV.
+
+    These streams have codec_type 'video' but are not actual video — they
+    typically carry low-resolution cover images and should be ignored when
+    reading resolution, fps and bitrate.
+    """
+    return bool(stream.get("disposition", {}).get("attached_pic"))
+
+
 def get_fps(path: str) -> float:
-    """Return the frame rate of the first video stream."""
+    """Return the frame rate of the first real video stream."""
     try:
         data = probe_video(path)
         for stream in data.get("streams", []):
-            if stream.get("codec_type") == "video":
-                r_frame_rate = stream.get("r_frame_rate", "0/1")
-                num, den = r_frame_rate.split("/")
-                return float(num) / float(den) if float(den) != 0 else 0.0
+            if stream.get("codec_type") == "video" and not _is_attached_pic(stream):
+                return _parse_fps(stream)
     except Exception:
         pass
     return 0.0
@@ -67,7 +96,7 @@ def get_video_dimensions(path: str) -> tuple[int, int]:
     try:
         data = probe_video(path)
         for stream in data.get("streams", []):
-            if stream.get("codec_type") == "video":
+            if stream.get("codec_type") == "video" and not _is_attached_pic(stream):
                 return int(stream.get("width", 0)), int(stream.get("height", 0))
     except Exception:
         pass
@@ -150,17 +179,11 @@ def _get_scan_info(path: str) -> tuple[Optional[int], float]:
         if br:
             kbps = max(1, int(br) // 1000)
         for stream in data.get("streams", []):
-            if stream.get("codec_type") == "video":
+            if stream.get("codec_type") == "video" and not _is_attached_pic(stream):
                 vbr = stream.get("bit_rate")
                 if vbr:
                     kbps = max(1, int(vbr) // 1000)   # stream bitrate preferred
-                rfr = stream.get("r_frame_rate", "0/1")
-                try:
-                    num, den = rfr.split("/")
-                    if float(den) != 0:
-                        fps = float(num) / float(den)
-                except Exception:
-                    pass
+                fps = _parse_fps(stream)
                 break
     except Exception:
         pass
@@ -251,19 +274,13 @@ def get_file_metadata(path: str) -> dict:
             lang  = tags.get("language") or tags.get("LANGUAGE") or ""
             title = tags.get("title")    or tags.get("TITLE")    or ""
 
-            if ctype == "video":
+            if ctype == "video" and not _is_attached_pic(stream):
                 out["width"]  = stream.get("width",  0)
                 out["height"] = stream.get("height", 0)
                 vbr = stream.get("bit_rate")
                 if vbr:
                     out["video_kbps"] = max(1, int(vbr) // 1000)
-                rfr = stream.get("r_frame_rate", "0/1")
-                try:
-                    num, den = rfr.split("/")
-                    if float(den) != 0:
-                        out["fps"] = float(num) / float(den)
-                except Exception:
-                    pass
+                out["fps"] = _parse_fps(stream)
                 dur = stream.get("duration")
                 if dur:
                     out["duration_secs"] = float(dur)
