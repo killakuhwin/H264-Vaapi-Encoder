@@ -447,6 +447,14 @@ def _double_bitrate(bitrate_str: str) -> str:
     return f"{kbps * 2}k"
 
 
+# Bitmap subtitle codecs that cannot be muxed into MP4 (no mov_text conversion).
+_BITMAP_SUB_CODECS = frozenset({
+    "hdmv_pgs_subtitle", "pgssub",
+    "dvd_subtitle", "dvdsub",
+    "dvb_subtitle", "dvbsub",
+    "xsub",
+})
+
 def build_ffmpeg_cmd(job: EncodeJob, fps: float,
                      output_override: Optional[str] = None) -> list[str]:
     video_bitrate = job.video_bitrate

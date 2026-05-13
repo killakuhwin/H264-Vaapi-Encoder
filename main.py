@@ -21,7 +21,7 @@ from encoder import (
     Encoder, EncodeJob,
     get_fps, get_video_dimensions, compute_output_dimensions,
     get_file_metadata, scan_folder, HIGH_FPS_THRESHOLD,
-    VIDEO_EXTENSIONS,
+    VIDEO_EXTENSIONS, _BITMAP_SUB_CODECS,
 )
 
 # ---------------------------------------------------------------------------
@@ -1200,7 +1200,10 @@ class MainWindow(Gtk.Window):
         source_rotation = self._file_metadata.get(path, {}).get("rotation", 0)
         audio_streams, sub_streams = self._file_streams.get(path, ([], []))
         sel_audio = [s["rel_idx"] for s in audio_streams if s["enabled"]]
-        sel_subs  = [s["rel_idx"] for s in sub_streams  if s["enabled"]]
+        # Bitmap subtitle codecs (PGS, DVD, DVB, XSUB) cannot be muxed into
+        # MP4 as mov_text — skip them silently rather than letting ffmpeg fail.
+        sel_subs  = [s["rel_idx"] for s in sub_streams
+                     if s["enabled"] and s.get("codec", "") not in _BITMAP_SUB_CODECS]
         return EncodeJob(
             input_path=path,
             output_path=out_path,
