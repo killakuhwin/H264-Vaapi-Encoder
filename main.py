@@ -1995,6 +1995,33 @@ class MainWindow(Gtk.Window):
             sub_item.set_sensitive(False)
         menu.append(sub_item)
 
+        # ---- Bulk audio language toggle (all queued files) ---------------
+        # Collect language → (enabled_count, total_count) across entire queue.
+        lang_counts: dict[str, list[int]] = {}  # lang -> [enabled, total]
+        for fp in self._queue:
+            a, _ = self._file_streams.get(fp, ([], []))
+            for s in a:
+                lng = s.get("language") or "?"
+                if lng not in lang_counts:
+                    lang_counts[lng] = [0, 0]
+                lang_counts[lng][1] += 1
+                if s["enabled"]:
+                    lang_counts[lng][0] += 1
+
+        if lang_counts:
+            bulk_item = Gtk.MenuItem(label=i18n.t("ctx_bulk_audio"))
+            bulk_menu = Gtk.Menu()
+            for lng in sorted(lang_counts):
+                enabled, total = lang_counts[lng]
+                chk = Gtk.CheckMenuItem(label=lng)
+                chk.set_inconsistent(0 < enabled < total)
+                chk.set_active(enabled == total)
+                chk.connect("activate",
+                            lambda btn, l=lng: self._bulk_set_audio_lang(l, btn.get_active()))
+                bulk_menu.append(chk)
+            bulk_item.set_submenu(bulk_menu)
+            menu.append(bulk_item)
+
         menu.append(Gtk.SeparatorMenuItem())
 
         # ---- Rotation ---------------------------------------------------
@@ -2190,6 +2217,21 @@ class MainWindow(Gtk.Window):
             self._clear_preview()
         self._save_queue()
 
+    def _bulk_set_audio_lang(self, lang: str, enabled: bool):
+        """Enable or disable all audio tracks of *lang* across every queued file."""
+        for fp in self._queue:
+            audio, subs = self._file_streams.get(fp, ([], []))
+            changed = False
+            for s in audio:
+                if (s.get("language") or "?") == lang:
+                    s["enabled"] = enabled
+                    changed = True
+            if changed:
+                it = self._find_row(fp)
+                if it:
+                    self._store.set_value(it, COL_AUDIO_LABEL, self._stream_summary(audio))
+        self._save_queue()
+
     def _on_stream_toggle(self, btn, stream: dict, file_path: str, tree_path):
         stream["enabled"] = btn.get_active()
         it = self._store.get_iter(tree_path)
@@ -2197,6 +2239,7 @@ class MainWindow(Gtk.Window):
             audio, subs = self._file_streams.get(file_path, ([], []))
             self._store.set_value(it, COL_AUDIO_LABEL, self._stream_summary(audio))
             self._store.set_value(it, COL_SUB_LABEL,   self._stream_summary(subs))
+        self._save_queue()
 
     def _show_error(self, message: str):
         dlg = Gtk.MessageDialog(
