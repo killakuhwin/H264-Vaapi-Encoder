@@ -584,16 +584,33 @@ class Encoder:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            bufsize=0,           # unbuffered raw bytes
         )
 
         recent: collections.deque = collections.deque(maxlen=40)
         line_queue: queue.Queue = queue.Queue()
 
         def _reader():
-            for line in self._process.stdout:
-                line_queue.put(line)
+            """Read stdout in chunks, splitting on \\r or \\n.
+
+            ffmpeg writes progress lines ending with \\r, not \\n.
+            Reading line-by-line (splitting only on \\n) causes all those
+            \\r-terminated updates to accumulate into one giant "line" until
+            the next real newline, making the progress bar freeze then jump.
+            """
+            remainder = b""
+            while True:
+                chunk = self._process.stdout.read(4096)
+                if not chunk:
+                    break
+                remainder += chunk
+                parts = re.split(rb"[\r\n]", remainder)
+                remainder = parts[-1]   # last element is incomplete
+                for part in parts[:-1]:
+                    if part:
+                        line_queue.put(part.decode("utf-8", errors="replace"))
+            if remainder:
+                line_queue.put(remainder.decode("utf-8", errors="replace"))
             line_queue.put(None)   # EOF sentinel
 
         reader_thread = threading.Thread(target=_reader, daemon=True)
