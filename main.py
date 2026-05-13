@@ -1198,6 +1198,7 @@ class MainWindow(Gtk.Window):
                     audio_bitrate = None
 
         source_rotation = self._file_metadata.get(path, {}).get("rotation", 0)
+        pix_fmt         = self._file_metadata.get(path, {}).get("pix_fmt", "")
         audio_streams, sub_streams = self._file_streams.get(path, ([], []))
         sel_audio = [s["rel_idx"] for s in audio_streams if s["enabled"]]
         # Bitmap subtitle codecs (PGS, DVD, DVB, XSUB) cannot be muxed into
@@ -1218,6 +1219,7 @@ class MainWindow(Gtk.Window):
             flip=flip,
             work_dir=work_dir,
             source_rotation=source_rotation,
+            pix_fmt=pix_fmt,
         )
 
     def _on_start_encode(self, *_):
@@ -1386,8 +1388,8 @@ class MainWindow(Gtk.Window):
                 cached = None
             if cached and "rotation" not in cached:
                 cached = None
-            if cached and "_probe_ver" not in cached:
-                cached = None  # re-probe to pick up SAR-adjusted dimensions
+            if cached and cached.get("_probe_ver", 0) < 3:
+                cached = None  # re-probe to pick up pix_fmt (added in ver 3)
             meta = cached or get_file_metadata(path)
 
             def _apply():

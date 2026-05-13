@@ -34,6 +34,7 @@ class EncodeJob:
     flip: int = 0      # 0 = none, 1 = horizontal (hflip), 2 = vertical (vflip)
     work_dir: Optional[str] = None   # if set: encode here, then copy to output_path
     source_rotation: int = 0  # display rotation from file metadata (0/90/180/270)
+    pix_fmt: str = ""  # pixel format of the source video stream
 
 
 def probe_video(path: str) -> dict:
@@ -308,7 +309,7 @@ def get_file_metadata(path: str) -> dict:
     """
     out = dict(audio=[], subtitles=[], width=0, height=0,
                video_kbps=None, audio_kbps=None, fps=0.0, duration_secs=0.0,
-               rotation=0, _probe_ver=2)
+               rotation=0, pix_fmt="", _probe_ver=3)
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
@@ -361,6 +362,7 @@ def get_file_metadata(path: str) -> dict:
                 if vbr:
                     out["video_kbps"] = max(1, int(vbr) // 1000)
                 out["fps"] = _parse_fps(stream)
+                out["pix_fmt"] = stream.get("pix_fmt", "")
                 dur = stream.get("duration")
                 if dur:
                     out["duration_secs"] = float(dur)
@@ -447,6 +449,12 @@ def _double_bitrate(bitrate_str: str) -> str:
     return f"{kbps * 2}k"
 
 
+def _is_deep_color(pix_fmt: str) -> bool:
+    """Return True for > 8-bit pixel formats (10/12/14/16-bit)."""
+    return any(pix_fmt.endswith(s) for s in
+               ("10le", "10be", "12le", "12be", "14le", "14be", "16le", "16be"))
+
+
 # Bitmap subtitle codecs that cannot be muxed into MP4 (no mov_text conversion).
 _BITMAP_SUB_CODECS = frozenset({
     "hdmv_pgs_subtitle", "pgssub",
@@ -479,6 +487,7 @@ def build_ffmpeg_cmd(job: EncodeJob, fps: float,
         or job.flip != 0
         or needs_fps_filter
         or job.source_rotation != 0
+        or _is_deep_color(job.pix_fmt)   # VAAPI can't auto-scale deep-colour surfaces
     )
 
     if needs_sw:
