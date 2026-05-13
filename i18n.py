@@ -168,6 +168,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "stream_track_audio":  "Track {idx}: {name}  [{codec}, {ch_str}]",
         "stream_track_sub":    "Track {idx}: {name}  [{codec}]",
         "stream_unknown":      "unknown",
+        "sub_no_mp4":          "not MP4-compatible",
 
         # Scan dialog
         "scan_win_title":      "Scan Folder for Videos",
@@ -345,6 +346,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "stream_track_audio":  "Spur {idx}: {name}  [{codec}, {ch_str}]",
         "stream_track_sub":    "Spur {idx}: {name}  [{codec}]",
         "stream_unknown":      "unbekannt",
+        "sub_no_mp4":          "nicht MP4-kompatibel",
 
         # Scan dialog
         "scan_win_title":      "Ordner nach Videos scannen",

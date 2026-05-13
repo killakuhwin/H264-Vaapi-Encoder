@@ -1975,12 +1975,20 @@ class MainWindow(Gtk.Window):
         if subs and not is_done:
             sub_menu = Gtk.Menu()
             for stream in subs:
+                is_bitmap = stream.get("codec", "") in _BITMAP_SUB_CODECS
                 label = self._stream_label(stream, "subtitle")
+                if is_bitmap:
+                    label += f"  [{i18n.t('sub_no_mp4')}]"
                 chk = Gtk.CheckMenuItem(label=label)
-                chk.set_active(stream["enabled"])
-                chk.connect("toggled",
-                            lambda btn, s=stream, fp=file_path, tp=tree_path:
-                            self._on_stream_toggle(btn, s, fp, tp))
+                if is_bitmap:
+                    stream["enabled"] = False
+                    chk.set_active(False)
+                    chk.set_sensitive(False)
+                else:
+                    chk.set_active(stream["enabled"])
+                    chk.connect("toggled",
+                                lambda btn, s=stream, fp=file_path, tp=tree_path:
+                                self._on_stream_toggle(btn, s, fp, tp))
                 sub_menu.append(chk)
             sub_item.set_submenu(sub_menu)
         else:
