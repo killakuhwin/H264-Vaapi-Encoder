@@ -26,6 +26,7 @@ class EncodeJob:
     video_bitrate: str
     audio_bitrate: Optional[str]  # None = stream-copy audio
     replace_original: bool
+    delete_original: bool = False  # delete source after success (non-replace mode)
     resolution_height: Optional[int] = None      # None = keep original
     selected_audio: Optional[list[int]] = None   # rel. indices; None = all
     selected_subtitles: Optional[list[int]] = None  # rel. indices; None = none
@@ -715,6 +716,8 @@ class Encoder:
 
                 if job.replace_original:
                     os.replace(job.output_path, job.input_path)
+                elif job.delete_original:
+                    os.remove(job.input_path)
 
                 on_done(True, "")
 

@@ -63,6 +63,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "radio_new_name":      "Use new name",
         "radio_same_name":     "Keep same filename",
         "radio_replace":       "Replace source file (delete original)",
+        "chk_delete_original": "Delete original after encoding",
         "affix_suffix":        "Suffix",
         "affix_prefix":        "Prefix",
 
@@ -242,6 +243,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "radio_new_name":      "Neuen Namen verwenden",
         "radio_same_name":     "Gleichen Dateinamen behalten",
         "radio_replace":       "Quelldatei ersetzen (Original löschen)",
+        "chk_delete_original": "Original nach dem Kodieren löschen",
         "affix_suffix":        "Suffix",
         "affix_prefix":        "Präfix",
 

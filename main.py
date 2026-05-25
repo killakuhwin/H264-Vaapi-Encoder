@@ -593,6 +593,11 @@ class MainWindow(Gtk.Window):
         naming_box.pack_start(suffix_row, False, False, 0)
         self._suffix_row = suffix_row
 
+        self._chk_delete_original = Gtk.CheckButton(label="Original löschen")
+        self._chk_delete_original.set_no_show_all(True)
+        self._chk_delete_original.set_visible(False)   # shown in custom-dir mode
+        naming_box.pack_start(self._chk_delete_original, False, False, 0)
+
         # ---- Bitrate settings ------------------------------------------
         self._frame_bitrate = Gtk.Frame(label="Bitrate-Einstellungen")
         br_frame = self._frame_bitrate
@@ -675,6 +680,7 @@ class MainWindow(Gtk.Window):
         for w in (self._combo_vbr, self._combo_abr, self._combo_res, self._combo_affix):
             w.connect("changed", self._save_settings)
         for w in (self._chk_fps_limit, self._chk_src_dir, self._chk_work_dir,
+                  self._chk_delete_original,
                   self._radio_new_name, self._radio_same_name, self._radio_replace,
                   self._radio_action_nothing, self._radio_action_quit,
                   self._radio_action_shutdown):
@@ -761,6 +767,7 @@ class MainWindow(Gtk.Window):
         self._radio_new_name.set_label(i18n.t("radio_new_name"))
         self._radio_same_name.set_label(i18n.t("radio_same_name"))
         self._radio_replace.set_label(i18n.t("radio_replace"))
+        self._chk_delete_original.set_label(i18n.t("chk_delete_original"))
         active = self._combo_affix.get_active()
         self._combo_affix.handler_block_by_func(self._save_settings)
         self._combo_affix.remove_all()
@@ -940,10 +947,19 @@ class MainWindow(Gtk.Window):
             self._radio_new_name.set_active(True)
         if not use_src and self._radio_replace.get_active():
             self._radio_new_name.set_active(True)
+        self._sync_delete_original_visibility()
 
     def _on_naming_toggled(self, btn):
         # Suffix only relevant when "Neuen Namen verwenden" is active.
         self._suffix_row.set_sensitive(self._radio_new_name.get_active())
+        self._sync_delete_original_visibility()
+
+    def _sync_delete_original_visibility(self):
+        """Show 'Delete original' only when Replace is not the active mode."""
+        show = not self._radio_replace.get_active()
+        self._chk_delete_original.set_visible(show)
+        if not show:
+            self._chk_delete_original.set_active(False)
 
     def _on_browse_outdir(self, *_):
         dialog = Gtk.FileChooserDialog(
@@ -1156,8 +1172,10 @@ class MainWindow(Gtk.Window):
     def _build_job(self, path: str) -> EncodeJob:
         """Build an EncodeJob for *path* using the current UI settings."""
         use_src_dir   = self._chk_src_dir.get_active()
-        replace_orig  = self._radio_replace.get_active()
-        keep_name     = self._radio_same_name.get_active()
+        replace_orig     = self._radio_replace.get_active()
+        delete_orig      = (self._chk_delete_original.get_active()
+                            and not replace_orig)
+        keep_name        = self._radio_same_name.get_active()
         output_dir    = self._entry_outdir.get_text().strip()
         custom_affix  = self._entry_suffix.get_text().strip()
         use_prefix    = self._combo_affix.get_active() == 1
@@ -1211,6 +1229,7 @@ class MainWindow(Gtk.Window):
             video_bitrate=video_bitrate,
             audio_bitrate=audio_bitrate,
             replace_original=replace_orig,
+            delete_original=delete_orig,
             resolution_height=resolution_height,
             selected_audio=sel_audio if audio_streams else None,
             selected_subtitles=sel_subs if sub_streams else None,
@@ -1520,6 +1539,7 @@ class MainWindow(Gtk.Window):
                 "work_dir_enabled":  self._chk_work_dir.get_active(),
                 "work_dir":          self._entry_work_dir.get_text(),
                 "naming":            naming,
+                "delete_original":   self._chk_delete_original.get_active(),
                 "affix_mode":        "prefix" if self._combo_affix.get_active() == 1 else "suffix",
                 "suffix":            self._entry_suffix.get_text(),
                 "post_action":       action,
@@ -1575,6 +1595,7 @@ class MainWindow(Gtk.Window):
             self._radio_replace.set_active(True)
         else:
             self._radio_new_name.set_active(True)
+        self._chk_delete_original.set_active(data.get("delete_original", False))
 
         affix_mode = data.get("affix_mode", "suffix")
         self._combo_affix.set_active(1 if affix_mode == "prefix" else 0)
